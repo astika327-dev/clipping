@@ -20,6 +20,15 @@ from audio_analyzer import AudioAnalyzer
 from clip_generator import ClipGenerator
 import psutil
 
+try:
+    import yt_dlp
+    YTDLPDownloadError = yt_dlp.utils.DownloadError
+except ImportError:  # pragma: no cover - optional dependency outside tests
+    yt_dlp = None
+    class YTDLPDownloadError(Exception):
+        """Fallback exception when yt-dlp is unavailable."""
+        pass
+
 app = Flask(__name__)
 CORS(app)
 
@@ -30,6 +39,12 @@ app.config.from_object(Config)
 processing_status = {}
 processing_semaphore = threading.Semaphore(Config.PROCESSING_CONCURRENCY)
 JOB_ID_PATTERN = re.compile(r'^[A-Za-z0-9_\-]+$')
+MODEL_NAME_PATTERN = re.compile(r'^[A-Za-z0-9_\-\.]+$')
+DEVICE_NAME_PATTERN = re.compile(r'^[A-Za-z0-9_:\-]+$')
+YOUTUBE_URL_PATTERN = re.compile(
+    r'^(https?://)?(www\.|m\.)?(youtube\.com|youtu\.be)/.+',
+    re.IGNORECASE
+)
 
 def allowed_file(filename):
     """Check if file extension is allowed"""
@@ -49,6 +64,21 @@ def is_safe_job_id(job_id):
 def is_safe_filename(filename):
     """Ensure filenames remain sanitized across requests."""
     return bool(filename and secure_filename(filename) == filename)
+
+
+def is_safe_model_name(name):
+    """Limit whisper model inputs to alphanumeric-friendly tokens."""
+    return bool(name and MODEL_NAME_PATTERN.fullmatch(name))
+
+
+def is_safe_device_name(name):
+    """Validate device or compute descriptors."""
+    return bool(name and DEVICE_NAME_PATTERN.fullmatch(name))
+
+
+def is_valid_youtube_url(url):
+    """Basic validation to guard youtube downloader endpoint."""
+    return bool(url and YOUTUBE_URL_PATTERN.match(url.strip()))
 
 
 def collect_process_stats(keyword):
@@ -157,6 +187,109 @@ def upload_video():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/api/youtube', methods=['POST'])
+def download_youtube_video():
+    """Download a YouTube video directly into the uploads folder."""
+    if yt_dlp is None:
+        return jsonify({'error': 'yt-dlp belum terpasang di server. Jalankan pip install yt-dlp'}), 500
+
+    data = request.get_json(silent=True) or {}
+    url = (data.get('url') or '').strip()
+
+    if not url:
+        return jsonify({'error': 'URL YouTube wajib diisi'}), 400
+    if not is_valid_youtube_url(url):
+        return jsonify({'error': 'URL harus berasal dari YouTube'}), 400
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    ydl_opts = {
+        'format': 'bv*+ba/best',
+        'merge_output_format': 'mp4',
+        'outtmpl': os.path.join(Config.UPLOAD_FOLDER, '%(id)s.%(ext)s'),
+        'noplaylist': True,
+        'quiet': True,
+        'no_warnings': True,
+        'retries': 2,
+    }
+
+    temp_path = None
+    final_path = None
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if not info:
+                raise ValueError('Tidak bisa mengambil informasi video YouTube')
+
+            temp_path = info.get('_filename') or ydl.prepare_filename(info)
+            if not os.path.exists(temp_path):
+                requested = info.get('requested_downloads') or []
+                for item in requested:
+                    candidate = item.get('filepath')
+                    if candidate and os.path.exists(candidate):
+                        temp_path = candidate
+                        break
+
+            if not (temp_path and os.path.exists(temp_path)):
+                raise FileNotFoundError('File hasil unduhan tidak ditemukan')
+
+            raw_extension = os.path.splitext(temp_path)[1] or '.mp4'
+            safe_title = secure_filename(info.get('title') or '')
+            if not safe_title:
+                safe_title = info.get('id', 'youtube_video')
+            final_filename = f"{timestamp}_{safe_title}_{info.get('id', 'yt')}{raw_extension}"
+            final_path = os.path.join(Config.UPLOAD_FOLDER, final_filename)
+            shutil.move(temp_path, final_path)
+
+            file_size = get_file_size(final_path)
+            if file_size > Config.MAX_VIDEO_SIZE:
+                os.remove(final_path)
+                return jsonify({'error': 'File terlalu besar setelah diunduh (maks 2GB)'}), 400
+
+            duration = info.get('duration') or get_video_duration(final_path)
+            if duration > Config.MAX_VIDEO_DURATION:
+                os.remove(final_path)
+                return jsonify({'error': 'Durasi video YouTube melebihi batas 60 menit'}), 400
+
+            return jsonify({
+                'success': True,
+                'filename': final_filename,
+                'filepath': final_path,
+                'size': file_size,
+                'duration': duration,
+                'source': 'youtube',
+                'title': info.get('title'),
+                'channel': info.get('uploader'),
+                'url': url
+            })
+
+    except YTDLPDownloadError as e:
+        if final_path and os.path.exists(final_path):
+            try:
+                os.remove(final_path)
+            except OSError:
+                pass
+        error_message = getattr(e, 'exc_info', [None, None, None])[1]
+        readable = str(error_message or e)
+        return jsonify({'error': f'Gagal mengunduh video: {readable}'}), 400
+    except Exception as e:
+        if final_path and os.path.exists(final_path):
+            try:
+                os.remove(final_path)
+            except OSError:
+                pass
+        print(f"Error downloading YouTube video: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        # Hapus file sementara bila masih tersisa
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
 import numpy as np
 
 def convert_numpy_types(obj):
@@ -195,6 +328,25 @@ def process_video():
         style = data.get('style', 'balanced')
         use_timoty_hooks = bool(data.get('use_timoty_hooks', False))
         auto_caption = bool(data.get('auto_caption', False))
+
+        backend_choice = str(data.get('transcription_backend', '') or '').strip().lower()
+        overrides = {}
+        if backend_choice in {'faster-whisper', 'openai-whisper'}:
+            overrides['transcription_backend'] = backend_choice
+
+        override_fields = [
+            ('whisper_model', 'whisper_model', is_safe_model_name),
+            ('faster_whisper_model', 'faster_whisper_model', is_safe_model_name),
+            ('faster_whisper_compute_type', 'faster_whisper_compute_type', is_safe_model_name),
+            ('faster_whisper_device', 'faster_whisper_device', is_safe_device_name)
+        ]
+
+        for payload_key, override_key, validator in override_fields:
+            value = data.get(payload_key)
+            if isinstance(value, str):
+                trimmed = value.strip()
+                if validator(trimmed):
+                    overrides[override_key] = trimmed
         
         if not filename:
             return jsonify({'error': 'No filename provided'}), 400
@@ -230,7 +382,7 @@ def process_video():
             processing_status[job_id]['message'] = 'Analyzing audio...'
             processing_status[job_id]['progress'] = 40
             
-            audio_analyzer = AudioAnalyzer(filepath, Config)
+            audio_analyzer = AudioAnalyzer(filepath, Config, overrides=overrides)
             audio_analysis = audio_analyzer.analyze(language)
             
             # Step 3: Generate Clips

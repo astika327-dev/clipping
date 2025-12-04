@@ -127,6 +127,25 @@ Frontend sekarang berjalan di: **http://localhost:5173/**
 
 ---
 
+## 📥 Pilihan Input Video
+
+Sekarang ada dua cara memasukkan video panjang ke dalam sistem:
+
+1. **Upload File Lokal**
+  - Drag & drop atau klik kotak unggah.
+  - Format yang didukung: MP4, MOV, AVI, MKV (maks 2GB / 60 menit).
+  - Proses upload berjalan melalui koneksi browser → backend.
+
+2. **Import lewat Link YouTube**
+  - Masukkan URL video (public / unlisted) pada kolom “Import langsung dari YouTube”.
+  - Klik tombol **“Ambil dari YouTube”**.
+  - Backend akan memakai `yt-dlp` untuk mengunduh langsung ke server GPU sehingga lebih stabil untuk file besar.
+  - Setelah unduhan selesai, kartu “Video Uploaded” akan muncul dengan metadata judul/channel dari YouTube.
+
+> Catatan: Batas durasi & ukuran tetap sama (60 menit, 2GB). Video private / premium tidak bisa diambil.
+
+---
+
 ## 🛑 Menghentikan Aplikasi
 
 ### Menghentikan Backend

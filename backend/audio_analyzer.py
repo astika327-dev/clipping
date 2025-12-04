@@ -3,7 +3,7 @@ Audio Analyzer Module
 Handles audio transcription and content analysis using Whisper
 """
 import re
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 
 import numpy as np
 
@@ -18,21 +18,31 @@ except ImportError:  # pragma: no cover - optional dependency
     FasterWhisperModel = None
 
 class AudioAnalyzer:
-    def __init__(self, video_path: str, config):
+    def __init__(self, video_path: str, config, overrides: Optional[Dict[str, str]] = None):
         self.video_path = video_path
         self.config = config
         self.model = None
         self.transcript = None
         self.faster_model = None
-        self.backend = getattr(config, 'TRANSCRIPTION_BACKEND', 'openai-whisper')
-        self.backend = self.backend.lower()
+        overrides = overrides or {}
+
+        default_backend = getattr(config, 'TRANSCRIPTION_BACKEND', 'openai-whisper')
+        self.backend = overrides.get('transcription_backend', default_backend)
+        self.backend = (self.backend or default_backend).lower()
+
+        self.whisper_model_name = overrides.get('whisper_model', getattr(config, 'WHISPER_MODEL', 'tiny'))
+        self.faster_model_name = overrides.get('faster_whisper_model', getattr(config, 'FASTER_WHISPER_MODEL', 'tiny'))
+        self.faster_device = overrides.get('faster_whisper_device', getattr(config, 'FASTER_WHISPER_DEVICE', 'cpu'))
+        self.faster_compute_type = overrides.get('faster_whisper_compute_type', getattr(config, 'FASTER_WHISPER_COMPUTE_TYPE', 'int8_float16'))
         
     def analyze(self, language: str = 'id') -> Dict:
         """
         Main analysis function
         Returns transcription and content analysis
         """
-        print(f"🎤 Analyzing audio with Whisper ({self.config.WHISPER_MODEL} model)...")
+        model_name = self.faster_model_name if self.backend == 'faster-whisper' else self.whisper_model_name
+        backend_label = 'Faster-Whisper' if self.backend == 'faster-whisper' else 'openai-whisper'
+        print(f"🎤 Analyzing audio with Whisper ({model_name} via {backend_label})...")
         
         # Load model lazily depending on backend
         transcript = self._transcribe(language)
@@ -50,8 +60,8 @@ class AudioAnalyzer:
         if whisper is None:
             raise ImportError("openai-whisper is not installed")
         if self.model is None:
-            print(f"📥 Loading Whisper model: {self.config.WHISPER_MODEL}")
-            self.model = whisper.load_model(self.config.WHISPER_MODEL)
+            print(f"📥 Loading Whisper model: {self.whisper_model_name}")
+            self.model = whisper.load_model(self.whisper_model_name)
             print("✅ Model loaded")
 
     def _load_faster_whisper_model(self):
@@ -59,11 +69,14 @@ class AudioAnalyzer:
         if FasterWhisperModel is None:
             raise ImportError("faster-whisper is not installed")
         if self.faster_model is None:
-            print(f"⚡ Loading Faster-Whisper model: {self.config.FASTER_WHISPER_MODEL}")
+            print(
+                f"⚡ Loading Faster-Whisper model: {self.faster_model_name}"
+                f" [{self.faster_device} / {self.faster_compute_type}]"
+            )
             self.faster_model = FasterWhisperModel(
-                self.config.FASTER_WHISPER_MODEL,
-                device=self.config.FASTER_WHISPER_DEVICE,
-                compute_type=self.config.FASTER_WHISPER_COMPUTE_TYPE
+                self.faster_model_name,
+                device=self.faster_device,
+                compute_type=self.faster_compute_type
             )
             print("✅ Faster-Whisper model ready")
     

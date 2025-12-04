@@ -12,7 +12,9 @@ function App() {
     targetDuration: 'all',
     style: 'balanced',
     useTimotyHook: true,
-    autoCaption: false
+    autoCaption: false,
+    transcriptionBackend: 'faster-whisper',
+    modelSize: 'medium'
   })
   const [processing, setProcessing] = useState(false)
   const [jobId, setJobId] = useState(null)
@@ -90,6 +92,19 @@ function App() {
                     <span className="ml-2 badge-success">Siap Diproses</span>
                   </div>
                 </div>
+                {uploadedVideo.source === 'youtube' && (
+                  <div className="mt-4 glass rounded-lg p-4 text-sm">
+                    <p className="font-semibold flex items-center gap-2">
+                      <span>📺</span>
+                      Konten dari YouTube
+                    </p>
+                    <p className="text-white/70 mt-1">
+                      {uploadedVideo.title || 'Tanpa judul'}
+                      {uploadedVideo.channel ? ` • ${uploadedVideo.channel}` : ''}
+                    </p>
+                    <p className="text-white/50 text-xs mt-1 break-all">{uploadedVideo.url}</p>
+                  </div>
+                )}
               </div>
 
               <SettingsPanel

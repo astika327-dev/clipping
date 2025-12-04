@@ -5,6 +5,8 @@ function VideoUploader({ onVideoUploaded }) {
   const [isDragging, setIsDragging] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState(null)
+  const [youtubeUrl, setYoutubeUrl] = useState('')
+  const [downloading, setDownloading] = useState(false)
   const fileInputRef = useRef(null)
 
   const handleDragOver = (e) => {
@@ -62,6 +64,38 @@ function VideoUploader({ onVideoUploaded }) {
     }
   }
 
+  const handleYoutubeDownload = async () => {
+    const trimmedUrl = youtubeUrl.trim()
+    if (!trimmedUrl) {
+      setError('Masukkan URL YouTube terlebih dahulu.')
+      return
+    }
+
+    setError(null)
+    setDownloading(true)
+    try {
+      const response = await axios.post('/api/youtube', { url: trimmedUrl })
+      if (response.data.success) {
+        onVideoUploaded(response.data)
+        setYoutubeUrl('')
+      } else {
+        setError(response.data.error || 'Gagal mengambil video dari YouTube.')
+      }
+    } catch (err) {
+      console.error('YouTube download error:', err)
+      setError(err.response?.data?.error || 'Gagal mengambil video dari YouTube. Coba ulangi atau gunakan link berbeda.')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  const handleYoutubeSubmit = (event) => {
+    event.preventDefault()
+    if (!downloading) {
+      handleYoutubeDownload()
+    }
+  }
+
   return (
     <div className="card">
       <h2 className="text-2xl font-bold mb-6">Upload Video</h2>
@@ -74,7 +108,7 @@ function VideoUploader({ onVideoUploaded }) {
             ? 'border-primary-400 bg-primary-500/10' 
             : 'border-white/30 hover:border-white/50'
           }
-          ${uploading ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+          ${(uploading || downloading) ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
         `}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -114,6 +148,42 @@ function VideoUploader({ onVideoUploaded }) {
           <p className="text-red-300 text-sm">❌ {error}</p>
         </div>
       )}
+
+      <form onSubmit={handleYoutubeSubmit} className="mt-6 space-y-3">
+        <label className="block text-sm font-semibold">
+          Atau import langsung dari YouTube
+        </label>
+        <div className="flex flex-col md:flex-row gap-3">
+          <input
+            type="url"
+            value={youtubeUrl}
+            onChange={(e) => setYoutubeUrl(e.target.value)}
+            placeholder="https://www.youtube.com/watch?v=..."
+            className="input-field flex-1"
+            disabled={downloading || uploading}
+          />
+          <button
+            type="submit"
+            disabled={downloading || uploading}
+            className="btn-primary md:w-48 flex items-center justify-center"
+          >
+            {downloading ? (
+              <span className="flex items-center gap-2">
+                <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                Mengunduh...
+              </span>
+            ) : (
+              <>
+                <span className="mr-2">📥</span>
+                Ambil dari YouTube
+              </>
+            )}
+          </button>
+        </div>
+        <p className="text-white/50 text-xs">
+          Link YouTube akan diunduh di server GPU, maksimal 60 menit dan 2GB. Pastikan video tidak private.
+        </p>
+      </form>
 
       <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
         <div className="card-hover text-center">

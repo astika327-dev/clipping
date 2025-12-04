@@ -65,7 +65,13 @@ class Config:
     
     # Scoring thresholds
     MIN_VIRAL_SCORE = 0.5  # 0.0 to 1.0
-    MAX_CLIPS_PER_VIDEO = 10
+    MAX_CLIPS_PER_VIDEO = int(os.environ.get('MAX_CLIPS_PER_VIDEO', 30))
+    TARGET_CLIP_COUNT = int(os.environ.get('TARGET_CLIP_COUNT', 22))
+    MIN_CLIP_OUTPUT = int(os.environ.get('MIN_CLIP_OUTPUT', 15))
+    RELAXED_VIRAL_SCORE = float(os.environ.get('RELAXED_VIRAL_SCORE', 0.45))
+    FALLBACK_VIRAL_SCORE = float(os.environ.get('FALLBACK_VIRAL_SCORE', 0.35))
+    MIN_CLIP_GAP_SECONDS = float(os.environ.get('MIN_CLIP_GAP_SECONDS', 3.0))
+    MAX_CLIP_OVERLAP_RATIO = float(os.environ.get('MAX_CLIP_OVERLAP_RATIO', 0.6))
     
     # Scene detection
     SCENE_THRESHOLD = 27.0  # Lower = more sensitive

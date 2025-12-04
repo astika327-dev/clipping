@@ -394,27 +394,75 @@ class ClipGenerator:
         Select the best clips based on target duration
         """
         selected = []
-        
+
         # Filter by target duration
         if target_duration != 'all':
             candidates = [s for s in scored_segments if s['suitable_duration'] == target_duration]
         else:
             candidates = [s for s in scored_segments if s['suitable_duration'] != 'custom']
-        
+
         # If no suitable candidates, try to adjust durations
         if not candidates:
             candidates = self._adjust_segment_durations(scored_segments, target_duration)
-        
-        # Select top clips
-        for segment in candidates[:self.config.MAX_CLIPS_PER_VIDEO]:
-            if segment['viral_score'] >= self.config.MIN_VIRAL_SCORE:
+
+        max_clips = getattr(self.config, 'MAX_CLIPS_PER_VIDEO', 10)
+        target_goal = min(getattr(self.config, 'TARGET_CLIP_COUNT', max_clips), max_clips)
+        min_required = min(
+            max(1, getattr(self.config, 'MIN_CLIP_OUTPUT', 1)),
+            max_clips
+        )
+        base_threshold = getattr(self.config, 'MIN_VIRAL_SCORE', 0.5)
+        relaxed_threshold = max(
+            getattr(self.config, 'RELAXED_VIRAL_SCORE', base_threshold - 0.1),
+            0.0
+        )
+        fallback_threshold = max(
+            getattr(self.config, 'FALLBACK_VIRAL_SCORE', relaxed_threshold - 0.1),
+            0.0
+        )
+
+        seen_keys = set()
+
+        def pick(threshold: float, limit: int):
+            limit = min(limit, max_clips)
+            if len(selected) >= limit:
+                return
+            for segment in candidates:
+                if len(selected) >= limit:
+                    break
+                key = (round(segment['start'], 2), round(segment['end'], 2))
+                if key in seen_keys:
+                    continue
+                if segment['viral_score'] < threshold:
+                    continue
+                if not self._is_distinct_segment(segment, selected):
+                    continue
                 selected.append(segment)
-        
-        # Fallback: If no clips selected, take the top 3 best scoring segments regardless of threshold
+                seen_keys.add(key)
+
+        # Phase 1: aim for high-quality clips
+        pick(base_threshold, target_goal)
+
+        # Phase 2: if still short on clips, relax slightly
+        if len(selected) < target_goal:
+            pick(relaxed_threshold, target_goal)
+
+        # Phase 3: fill remaining capacity with relaxed threshold
+        if len(selected) < max_clips:
+            pick(relaxed_threshold, max_clips)
+
+        # Phase 4: final fallback to guarantee output
+        if len(selected) < max_clips:
+            pick(fallback_threshold, max_clips)
+
+        # Fallback: If still no clips, take the top 3 best scoring segments regardless of threshold
         if not selected and candidates:
-            print("⚠️ No clips met the viral score threshold. Selecting top 3 candidates anyway.")
-            selected = candidates[:3]
-            
+            print("⚠️ No clips met the viral score thresholds. Selecting top 3 candidates anyway.")
+            pick(-1.0, min(3, len(candidates)))
+
+        if len(selected) < min_required and candidates:
+            pick(-1.0, min_required)
+
         return selected
     
     def _adjust_segment_durations(self, segments: List[Dict], target: str) -> List[Dict]:
@@ -455,6 +503,38 @@ class ClipGenerator:
                 adjusted.append(segment)
         
         return adjusted
+
+    def _is_distinct_segment(self, candidate: Dict, selected: List[Dict]) -> bool:
+        """Prevent near-duplicate clips by enforcing overlap and spacing rules."""
+        if not selected:
+            return True
+
+        min_gap = max(0.0, getattr(self.config, 'MIN_CLIP_GAP_SECONDS', 3.0))
+        max_overlap = max(0.0, getattr(self.config, 'MAX_CLIP_OVERLAP_RATIO', 0.6))
+
+        for existing in selected:
+            overlap = self._calculate_overlap_ratio(existing, candidate)
+            if overlap >= max_overlap:
+                return False
+
+            start_gap = abs(candidate['start'] - existing['start'])
+            end_gap = abs(candidate['end'] - existing['end'])
+            if start_gap < min_gap and end_gap < min_gap:
+                return False
+
+        return True
+
+    @staticmethod
+    def _calculate_overlap_ratio(seg_a: Dict, seg_b: Dict) -> float:
+        """Measure overlap relative to the shorter clip to detect duplicates."""
+        start = max(seg_a['start'], seg_b['start'])
+        end = min(seg_a['end'], seg_b['end'])
+        if end <= start:
+            return 0.0
+
+        overlap = end - start
+        shortest = max(0.01, min(seg_a['duration'], seg_b['duration']))
+        return overlap / shortest
     
     def _create_clip_metadata(self, segments: List[Dict], hook_mode: str = None) -> List[Dict]:
         """
