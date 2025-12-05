@@ -50,9 +50,15 @@ class AudioAnalyzer:
         # Analyze content
         content_analysis = self._analyze_content(transcript)
         
+        # Detect silence/dead air if enabled
+        silence_periods = []
+        if getattr(self.config, 'ENABLE_DEAD_AIR_REMOVAL', True):
+            silence_periods = self.detect_silence()
+        
         return {
             'transcript': transcript,
-            'analysis': content_analysis
+            'analysis': content_analysis,
+            'silence_periods': silence_periods
         }
     
     def _load_openai_whisper_model(self):
@@ -175,6 +181,85 @@ class AudioAnalyzer:
         words = re.findall(r'\b\w+\b', text.lower())
         return words
     
+    def detect_silence(self) -> List[Tuple[float, float]]:
+        """Detect silence/dead air segments in audio using FFmpeg.
+        Returns list of (start_time, end_time) tuples for silence periods."""
+        import subprocess
+        
+        threshold_db = getattr(self.config, 'DEAD_AIR_THRESHOLD_DB', -35)
+        min_duration = getattr(self.config, 'MIN_DEAD_AIR_DURATION', 1.5)
+        
+        print(f"🔇 Detecting silence (threshold: {threshold_db}dB, min: {min_duration}s)...")
+        
+        cmd = [
+            'ffmpeg',
+            '-i', self.video_path,
+            '-af', f'silencedetect=n={threshold_db}dB:d={min_duration}',
+            '-f', 'null',
+            '-'
+        ]
+        
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            
+            silence_periods = []
+            lines = result.stderr.split('\n')
+            
+            silence_start = None
+            for line in lines:
+                if 'silencedetect' in line.lower():
+                    if 'silence_start' in line:
+                        match = re.search(r'silence_start: ([0-9.]+)', line)
+                        if match:
+                            silence_start = float(match.group(1))
+                    elif 'silence_end' in line and silence_start is not None:
+                        match = re.search(r'silence_end: ([0-9.]+)', line)
+                        if match:
+                            silence_end = float(match.group(1))
+                            silence_periods.append((silence_start, silence_end))
+                            silence_start = None
+            
+            print(f"✅ Found {len(silence_periods)} silence periods")
+            return silence_periods
+            
+        except Exception as e:
+            print(f"⚠️ Silence detection failed: {e}")
+            return []
+
+    def _detect_meta_topic(self, text: str, words: List[str]) -> Tuple[str, float]:
+        """Return the most relevant meta topic label and its strength (0-1)."""
+        meta_topics = getattr(self.config, 'META_TOPICS', {})
+        if not meta_topics:
+            return 'Umum', 0.0
+        best_label = 'Umum'
+        best_score = 0.0
+        for topic_id, data in meta_topics.items():
+            keywords = data.get('keywords', [])
+            if not keywords:
+                continue
+            single_tokens = [kw for kw in keywords if ' ' not in kw]
+            phrase_tokens = [kw for kw in keywords if ' ' in kw]
+            token_score = self._check_keywords(words, single_tokens)
+            phrase_score = self._calculate_phrase_score(text, phrase_tokens)
+            combined = max(token_score, phrase_score)
+            if combined > best_score:
+                best_score = combined
+                best_label = data.get('label', topic_id)
+        return best_label, min(1.0, best_score)
+
+    def _calculate_phrase_score(self, text: str, phrases: List[str]) -> float:
+        """Simple phrase matching score for multi-word keywords."""
+        if not phrases:
+            return 0.0
+        lowered = text.lower()
+        matches = sum(1 for phrase in phrases if phrase and phrase.lower() in lowered)
+        return min(matches / 2.0, 1.0)
+    
     def _analyze_content(self, transcript: Dict) -> Dict:
         """
         Analyze transcript content for viral potential
@@ -214,20 +299,26 @@ class AudioAnalyzer:
     def _score_segment(self, segment: Dict) -> Dict:
         """
         Score a single segment for various qualities
+        Enhanced with money/urgency, meta topics, and relatability detection
         """
-        text = segment['text'].lower()
+        raw_text = segment.get('text') or ''
+        text = raw_text.lower()
         words = segment['words']
         
-        # Check for viral keywords
+        # Check for viral keywords (including new categories)
         hook_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS['hook'])
         emotional_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS['emotional'])
         controversial_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS['controversial'])
         educational_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS['educational'])
         entertaining_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS['entertaining'])
         
-        # Check for filler words (negative score)
+        # NEW: Check for money and urgency keywords
+        money_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS.get('money', []))
+        urgency_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS.get('urgency', []))
+        
+        # Check for filler words (negative score) - reduced penalty
         filler_count = sum(1 for word in words if word in self.config.FILLER_WORDS)
-        filler_penalty = min(filler_count * 0.1, 0.5)
+        filler_penalty = min(filler_count * 0.08, 0.4)  # Reduced from 0.1 and 0.5
         
         # Check for questions (engaging)
         has_question = '?' in segment['text']
@@ -237,16 +328,37 @@ class AudioAnalyzer:
         has_numbers = bool(re.search(r'\d+', segment['text']))
         numbers_bonus = 0.15 if has_numbers else 0
         
-        # Calculate total engagement score
+        # Check for exclamation marks (emphasis)
+        has_exclamation = '!' in segment['text']
+        emphasis_bonus = 0.1 if has_exclamation else 0
+        
+        # Meta topic / mental slap detection
+        meta_topic_label, meta_topic_strength = self._detect_meta_topic(raw_text, words)
+        mental_slap_score = self._check_keywords(
+            words,
+            getattr(self.config, 'MENTAL_SLAP_KEYWORDS', [])
+        )
+        rare_topic_score = self._check_keywords(
+            words,
+            getattr(self.config, 'RARE_TOPICS', [])
+        )
+
+        # Enhanced engagement calculation with money, urgency, and relatability
         engagement = (
             hook_score * 0.25 +
-            emotional_score * 0.20 +
-            controversial_score * 0.15 +
-            educational_score * 0.15 +
-            entertaining_score * 0.15 +
+            emotional_score * 0.18 +  # Slightly reduced
+            controversial_score * 0.12 +  # Slightly reduced
+            educational_score * 0.12 +  # Slightly reduced
+            entertaining_score * 0.12 +  # Slightly reduced
+            money_score * 0.15 +  # NEW: Money keywords are highly engaging
+            urgency_score * 0.15 +  # NEW: Urgency creates FOMO
+            meta_topic_strength * 0.12 +
+            mental_slap_score * 0.18 +
             question_bonus +
-            numbers_bonus -
-            filler_penalty
+            numbers_bonus +
+            emphasis_bonus -
+            filler_penalty -
+            rare_topic_score * 0.2
         )
         
         engagement = max(0, min(1, engagement))  # Clamp to 0-1
@@ -257,9 +369,16 @@ class AudioAnalyzer:
             'controversial': controversial_score,
             'educational': educational_score,
             'entertaining': entertaining_score,
+            'money': money_score,
+            'urgency': urgency_score,
+            'meta_topic': meta_topic_label,
+            'meta_topic_strength': meta_topic_strength,
+            'mental_slap': mental_slap_score,
+            'rare_topic': rare_topic_score,
             'engagement': engagement,
             'has_question': has_question,
             'has_numbers': has_numbers,
+            'has_exclamation': has_exclamation,
             'filler_count': filler_count
         }
     

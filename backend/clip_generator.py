@@ -7,6 +7,7 @@ import re
 import subprocess
 import time
 from typing import List, Dict, Tuple
+from collections import Counter
 import json
 from datetime import timedelta
 
@@ -207,6 +208,17 @@ class ClipGenerator:
         """
         print("✂️ Generating clips...")
         
+        # Store silence periods for dead air detection
+        self.silence_periods = audio_analysis.get('silence_periods', [])
+        if self.silence_periods:
+            print(f"🔇 Dead air detection active: {len(self.silence_periods)} silence periods found")
+
+        # Store punchlines for text flash overlays
+        analysis_data = audio_analysis.get('analysis', {})
+        self.punchlines = analysis_data.get('punchlines', [])
+        if self.punchlines:
+            print(f"⚡ Punchlines available: {len(self.punchlines)} total")
+        
         # Merge analyses
         segments = self._merge_analyses(video_analysis, audio_analysis)
         
@@ -278,12 +290,20 @@ class ClipGenerator:
         if not segments:
             return {}
         
-        keys = ['hook', 'emotional', 'controversial', 'educational', 'entertaining', 'engagement']
+        keys = [
+            'hook', 'emotional', 'controversial', 'educational', 'entertaining',
+            'engagement', 'money', 'urgency', 'mental_slap',
+            'rare_topic', 'meta_topic_strength'
+        ]
         averaged = {}
         
         for key in keys:
-            values = [seg['scores'][key] for seg in segments if key in seg['scores']]
+            values = [seg['scores'].get(key) for seg in segments if key in seg['scores']]
             averaged[key] = sum(values) / len(values) if values else 0
+        
+        meta_topics = [seg['scores'].get('meta_topic') for seg in segments if seg['scores'].get('meta_topic')]
+        if meta_topics:
+            averaged['meta_topic'] = Counter(meta_topics).most_common(1)[0][0]
         
         return averaged
     
@@ -298,6 +318,16 @@ class ClipGenerator:
         for segment in segments:
             # Calculate viral score based on style
             viral_score = self._calculate_viral_score(segment, style)
+            
+            # Apply dead air penalty if silence info available
+            if hasattr(self, 'silence_periods') and self.silence_periods:
+                silence_ratio = self._calculate_silence_ratio(
+                    segment['start'], 
+                    segment['end']
+                )
+                if silence_ratio > 0.3:  # More than 30% silence
+                    penalty = silence_ratio * 0.2  # Up to 20% penalty
+                    viral_score = max(0, viral_score - penalty)
             
             # Determine category
             category = self._determine_category(segment)
@@ -317,53 +347,107 @@ class ClipGenerator:
         
         return scored
     
+    def _calculate_silence_ratio(self, start: float, end: float) -> float:
+        """Calculate what percentage of a segment is silence."""
+        if not hasattr(self, 'silence_periods') or not self.silence_periods:
+            return 0.0
+        
+        total_silence = 0.0
+        segment_duration = end - start
+        
+        for silence_start, silence_end in self.silence_periods:
+            # Calculate overlap between segment and silence period
+            overlap_start = max(start, silence_start)
+            overlap_end = min(end, silence_end)
+            
+            if overlap_end > overlap_start:
+                total_silence += (overlap_end - overlap_start)
+        
+        return total_silence / segment_duration if segment_duration > 0 else 0.0
+    
     def _calculate_viral_score(self, segment: Dict, style: str) -> float:
         """
         Calculate viral potential score (0-1)
+        Enhanced for better viral detection with aggressive weighting
         """
         visual = segment['visual']
         audio = segment['audio']
         
-        # Base scores
-        hook_strength = audio.get('hook', 0) * 0.30
+        # Enhanced base scores with higher weights for viral indicators
+        hook_strength = audio.get('hook', 0) * 0.35  # Increased from 0.30
+        audio_engagement = audio.get('engagement', 0) * 0.25  # Increased from 0.15
+        
+        # Content value with money and urgency keywords
         content_value = (
-            audio.get('emotional', 0) * 0.10 +
+            audio.get('emotional', 0) * 0.12 +  # Increased from 0.10
             audio.get('educational', 0) * 0.08 +
-            audio.get('entertaining', 0) * 0.07
+            audio.get('entertaining', 0) * 0.08 +  # Increased from 0.07
+            audio.get('controversial', 0) * 0.05 +
+            audio.get('money', 0) * 0.10 +
+            audio.get('urgency', 0) * 0.10
         )
-        visual_engagement = visual.get('visual_engagement', 0) * 0.20
-        audio_engagement = audio.get('engagement', 0) * 0.15
         
-        # Pacing score (prefer segments without long pauses)
-        pacing = 0.10 if segment['duration'] < 30 else 0.05
+        # Visual engagement with higher priority
+        visual_engagement = visual.get('visual_engagement', 0) * 0.25  # Increased from 0.20
         
-        # Style-specific bonuses
+        # Pacing score - prefer shorter, punchier clips
+        if segment['duration'] <= 15:
+            pacing = 0.15  # Short clips get higher score
+        elif segment['duration'] <= 25:
+            pacing = 0.10
+        else:
+            pacing = 0.05
+        
+        # Style-specific bonuses (increased)
         style_bonus = 0
         if style == 'funny':
-            style_bonus = audio.get('entertaining', 0) * 0.10
+            style_bonus = audio.get('entertaining', 0) * 0.15
         elif style == 'educational':
-            style_bonus = audio.get('educational', 0) * 0.10
+            style_bonus = audio.get('educational', 0) * 0.15
         elif style == 'dramatic':
-            style_bonus = audio.get('emotional', 0) * 0.10
+            style_bonus = audio.get('emotional', 0) * 0.15
         elif style == 'controversial':
-            style_bonus = audio.get('controversial', 0) * 0.10
+            style_bonus = audio.get('controversial', 0) * 0.15
         
-        # Visual bonuses
+        # Visual bonuses - more aggressive
+        visual_bonus = 0
         if visual.get('has_closeup'):
-            visual_engagement += 0.05
+            visual_bonus += 0.08  # Increased from 0.05
         if visual.get('has_high_motion'):
-            visual_engagement += 0.05
+            visual_bonus += 0.08  # Increased from 0.05
+        if visual.get('has_faces'):
+            visual_bonus += 0.05  # Added face detection bonus
         
+        # Check for questions (high engagement)
+        if segment.get('text') and '?' in segment['text']:
+            audio_engagement += 0.05
+        
+        # Check for numbers/stats (credibility boost)
+        if segment.get('text'):
+            import re
+            if re.search(r'\d+', segment['text']):
+                content_value += 0.05
+        
+        relatability_bonus = (
+            audio.get('mental_slap', 0) * 0.2 +
+            audio.get('meta_topic_strength', 0) * 0.15
+        )
+
+        rare_topic_penalty = audio.get('rare_topic', 0) * 0.2
+
         total_score = (
             hook_strength +
             content_value +
             visual_engagement +
             audio_engagement +
             pacing +
-            style_bonus
+            style_bonus +
+            visual_bonus +
+            relatability_bonus -
+            rare_topic_penalty
         )
         
-        return min(total_score, 1.0)
+        return max(0.0, min(total_score, 1.0))
     
     def _determine_category(self, segment: Dict) -> str:
         """Determine the primary category of the segment"""
@@ -572,6 +656,10 @@ class ClipGenerator:
                 hook_detail = self.hook_generator.generate(segment)
                 if hook_detail:
                     clip_payload['timoty_hook'] = hook_detail
+
+            text_flashes = self._build_text_flashes(clip_payload)
+            if text_flashes:
+                clip_payload['text_flashes'] = text_flashes
             clips.append(clip_payload)
         
         return clips
@@ -645,30 +733,159 @@ class ClipGenerator:
     
     def export_clip(self, clip: Dict, output_dir: str) -> str:
         """
-        Export a single clip using FFmpeg
+        Export a single clip using FFmpeg with 16:9 aspect ratio, optional hook overlay, and dead air removal
         """
         output_path = os.path.join(output_dir, clip['filename'])
         
-        # FFmpeg command
+        # Build audio filter for dead air removal
+        audio_filter = None
+        if getattr(self.config, 'ENABLE_DEAD_AIR_REMOVAL', True):
+            threshold_db = getattr(self.config, 'DEAD_AIR_THRESHOLD_DB', -35)
+            min_duration = getattr(self.config, 'MIN_DEAD_AIR_DURATION', 1.5)
+            padding = getattr(self.config, 'KEEP_SILENCE_PADDING', 0.2)
+            
+            # silenceremove filter: remove silence at start/end and in the middle
+            # start_periods=1: remove silence at the beginning
+            # start_threshold: audio below this is silence
+            # start_silence: how much starting silence to keep
+            # stop_periods=-1: remove all silence periods
+            # stop_threshold: audio below this is silence  
+            # stop_silence: keep this much silence between speech
+            audio_filter = (
+                f"silenceremove="
+                f"start_periods=1:"
+                f"start_threshold={threshold_db}dB:"
+                f"start_silence={padding}:"
+                f"stop_periods=-1:"
+                f"stop_threshold={threshold_db}dB:"
+                f"stop_silence={padding}"
+            )
+        
+        # Build video filter for 16:9 aspect ratio
+        # Scale and pad/crop to 1920x1080 (16:9)
+        video_filters = [
+            f"scale=w={self.config.TARGET_WIDTH}:h={self.config.TARGET_HEIGHT}:force_original_aspect_ratio=decrease",
+            f"pad={self.config.TARGET_WIDTH}:{self.config.TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black"
+        ]
+        
+        # Add hook overlay if enabled and hook exists
+        # Add punchy text flash overlays (FAKTOR 11)
+        text_flashes = clip.get('text_flashes', [])
+        if getattr(self.config, 'TEXT_FLASH_ENABLED', True) and text_flashes:
+            flash_font = getattr(self.config, 'TEXT_FLASH_FONT_SIZE', 72)
+            flash_color = getattr(self.config, 'TEXT_FLASH_FONT_COLOR', 'white')
+            flash_bg = getattr(self.config, 'TEXT_FLASH_BG_COLOR', 'black@0.8')
+            position = getattr(self.config, 'TEXT_FLASH_POSITION', 'center')
+            if position == 'top':
+                flash_y = 'h*0.2'
+            elif position == 'bottom':
+                flash_y = 'h*0.8'
+            else:
+                flash_y = '(h-text_h)/2'
+            for flash in text_flashes:
+                text = flash['text'].replace("'", "'\\\\\\''").replace(":", "\\:")
+                start = flash['start']
+                end = flash['end']
+                video_filters.append(
+                    "drawtext=text='{}':fontfile=/Windows/Fonts/Arial.ttf:"
+                    "fontsize={}:fontcolor={}:box=1:boxcolor={}:boxborderw=15:"
+                    "x=(w-text_w)/2:y={}:enable='between(t,{:.2f},{:.2f})'".format(
+                        text,
+                        flash_font,
+                        flash_color,
+                        flash_bg,
+                        flash_y,
+                        start,
+                        end
+                    )
+                )
+
+        if self.config.HOOK_ENABLED and clip.get('timoty_hook'):
+            hook_text = clip['timoty_hook'].get('text', '').replace("'", "'\\\\\\''").replace(":", "\\:")
+            if hook_text:
+                # Create hook overlay filter with clamped duration
+                min_hook = getattr(self.config, 'HOOK_MIN_DURATION', 0.5)
+                max_hook = getattr(self.config, 'HOOK_MAX_DURATION', 1.5)
+                preferred = getattr(self.config, 'HOOK_DURATION', max_hook)
+                absolute_cap = 2.0  # Hard safety cap per requirement
+                hook_duration = max(
+                    min_hook,
+                    min(preferred, clip['duration'], max_hook, absolute_cap)
+                )
+                font_size = self.config.HOOK_FONT_SIZE
+                
+                # Position calculation
+                if self.config.HOOK_POSITION == 'top':
+                    y_pos = 'h*0.15'
+                elif self.config.HOOK_POSITION == 'bottom':
+                    y_pos = 'h*0.85'
+                else:  # center
+                    y_pos = '(h-text_h)/2'
+                
+                # Build drawtext filter with fade animation
+                if self.config.HOOK_ANIMATION == 'fade':
+                    # Fade timings adapt to short duration hooks
+                    fade_limit = hook_duration / 2
+                    fade_in = max(0.1, min(0.3, fade_limit))
+                    fade_out = max(0.1, min(0.3, fade_limit))
+                    hold_until = max(fade_in, hook_duration - fade_out)
+                    alpha_expr = (
+                        f"if(lt(t,{fade_in}),t/{fade_in},"
+                        f"if(lt(t,{hold_until}),1,"
+                        f"if(lt(t,{hook_duration}),1-(t-({hook_duration - fade_out}))/{fade_out},0)))"
+                    )
+                    text_filter = (
+                        "drawtext=text='{}':fontfile=/Windows/Fonts/Arial.ttf:fontsize={}:"
+                        "fontcolor={}:box=1:boxcolor={}:boxborderw=20:x=(w-text_w)/2:y={}:"
+                        "alpha='{}':enable='lt(t,{})'"
+                    ).format(
+                        hook_text,
+                        font_size,
+                        self.config.HOOK_FONT_COLOR,
+                        self.config.HOOK_BG_COLOR,
+                        y_pos,
+                        alpha_expr,
+                        hook_duration
+                    )
+                else:
+                    # No animation, just show and hide
+                    text_filter = f"drawtext=text='{hook_text}':fontfile=/Windows/Fonts/Arial.ttf:fontsize={font_size}:fontcolor={self.config.HOOK_FONT_COLOR}:box=1:boxcolor={self.config.HOOK_BG_COLOR}:boxborderw=20:x=(w-text_w)/2:y={y_pos}:enable='lt(t,{hook_duration})'"
+                
+                video_filters.append(text_filter)
+        
+        # FFmpeg command with filters
+        composite_filter = ','.join(video_filters)
+
         cmd = [
             'ffmpeg',
             '-i', self.video_path,
             '-ss', str(clip['start_seconds']),
             '-t', str(clip['duration']),
+            '-vf', composite_filter
+        ]
+        
+        # Add audio filter if dead air removal is enabled
+        if audio_filter:
+            cmd.extend(['-af', audio_filter])
+        
+        # Add encoding parameters
+        cmd.extend([
             '-c:v', self.config.VIDEO_CODEC,
             '-b:v', self.config.VIDEO_BITRATE,
             '-c:a', self.config.AUDIO_CODEC,
             '-b:a', self.config.AUDIO_BITRATE,
+            '-preset', 'fast',  # Faster encoding
             '-y',  # Overwrite output file
             output_path
-        ]
+        ])
         
         # Run FFmpeg
         try:
-            subprocess.run(cmd, check=True, capture_output=True)
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
             return output_path
         except subprocess.CalledProcessError as e:
             print(f"❌ Error exporting clip: {e}")
+            print(f"   FFmpeg stderr: {e.stderr}")
             return None
     
     def export_all_clips(self, clips: List[Dict], output_dir: str) -> List[str]:
@@ -734,3 +951,67 @@ class ClipGenerator:
                 caption_file.write(f"{entry['index']}\n")
                 caption_file.write(f"{entry['start']} --> {entry['end']}\n")
                 caption_file.write(f"{entry['text']}\n\n")
+
+    def _build_text_flashes(self, clip: Dict) -> List[Dict]:
+        """Determine punchy text overlay moments (FAKTOR 11)."""
+        if not getattr(self.config, 'TEXT_FLASH_ENABLED', True):
+            return []
+
+        vocab = getattr(self.config, 'TEXT_FLASH_VOCAB', [])
+        max_flashes = getattr(self.config, 'MAX_TEXT_FLASH_PER_CLIP', 3)
+        duration = clip['duration']
+        flashes = []
+
+        candidates = []
+        for punch in self.punchlines:
+            start = punch.get('start', 0)
+            end = punch.get('end', 0)
+            text = (punch.get('text') or '').strip()
+            score = punch.get('score', 0)
+            if not text:
+                continue
+            abs_start = start - clip['start_seconds']
+            abs_end = end - clip['start_seconds']
+            if abs_end <= 0 or abs_start >= duration:
+                continue
+            center = max(0, min(duration, (abs_start + abs_end) / 2))
+            overlay_text = self._pick_flash_word(text, vocab)
+            candidates.append({
+                'center': center,
+                'text': overlay_text or text[:12].upper(),
+                'score': score
+            })
+
+        if candidates:
+            candidates.sort(key=lambda x: x['score'], reverse=True)
+            used_times = []
+            flash_duration = getattr(self.config, 'TEXT_FLASH_DURATION', 0.8)
+            half_window = flash_duration / 2
+            for candidate in candidates:
+                if len(flashes) >= max_flashes:
+                    break
+                if any(abs(candidate['center'] - used) < flash_duration for used in used_times):
+                    continue
+                flashes.append({
+                    'start': max(0, candidate['center'] - half_window),
+                    'end': min(duration, candidate['center'] + half_window),
+                    'text': candidate['text']
+                })
+                used_times.append(candidate['center'])
+
+        return flashes
+
+    def _pick_flash_word(self, punch_text: str, vocab: List[str]) -> str:
+        """Choose the most relevant flash word for a punchline."""
+        if not punch_text:
+            return ''
+        lowered = punch_text.lower()
+        for word in vocab:
+            if word.lower() in lowered:
+                return word.upper()
+        if len(punch_text.split()) <= 3:
+            return punch_text.upper()
+        for keyword in getattr(self.config, 'MENTAL_SLAP_KEYWORDS', []):
+            if keyword.lower() in lowered:
+                return keyword.upper()
+        return punch_text.split()[0].upper()

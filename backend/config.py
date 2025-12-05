@@ -81,6 +81,12 @@ class Config:
     SILENCE_THRESHOLD = -40  # dB
     MIN_SILENCE_DURATION = 1000  # milliseconds
     
+    # Dead air / silence removal
+    ENABLE_DEAD_AIR_REMOVAL = True  # Auto-cut silence gaps
+    DEAD_AIR_THRESHOLD_DB = -35  # Sound below this is considered silence (dB)
+    MIN_DEAD_AIR_DURATION = 1.5  # Minimum silence duration to cut (seconds)
+    KEEP_SILENCE_PADDING = 0.2  # Keep this much silence before/after speech (seconds)
+    
     # Filler words to remove (Indonesian & English)
     FILLER_WORDS = [
         'ehm', 'emm', 'umm', 'uh', 'um',
@@ -94,29 +100,167 @@ class Config:
         'hook': [
             'rahasia', 'secret', 'truth', 'fakta', 'fact',
             'shocking', 'mengejutkan', 'gak nyangka', 'ternyata',
-            'jangan', 'never', 'harus', 'must', 'wajib'
+            'jangan', 'never', 'harus', 'must', 'wajib',
+            'dengerin', 'perhatikan', 'listen', 'watch out',
+            'bongkar', 'reveal', 'bocor', 'leak', 'exposed',
+            'terbukti', 'proven', 'pasti', 'definitely',
+            'catet', 'catat', 'note', 'ingat', 'remember',
+            'brutal', 'savage', 'mentah', 'telanjang', 'blak-blakan',
+            'stop', 'quit', 'selesai', 'cukup', 'enough'
         ],
         'emotional': [
             'gagal', 'failed', 'sukses', 'success', 'menang', 'kalah',
             'sedih', 'bahagia', 'marah', 'kecewa', 'bangga',
-            'sad', 'happy', 'angry', 'proud', 'disappointed'
+            'sad', 'happy', 'angry', 'proud', 'disappointed',
+            'hancur', 'destroyed', 'ambyar', 'terpukul', 'down',
+            'naik', 'rise', 'meledak', 'explode', 'boom',
+            'gelisah', 'anxious', 'takut', 'scared', 'berani', 'brave',
+            'nyerah', 'give up', 'lawan', 'fight', 'perjuangan', 'struggle'
         ],
         'controversial': [
             'kontroversial', 'controversial', 'debat', 'debate',
             'salah', 'wrong', 'benar', 'right', 'bohong', 'lie',
-            'jujur', 'honest', 'truth', 'kebohongan'
+            'jujur', 'honest', 'truth', 'kebohongan',
+            'problematik', 'problematic', 'toxic', 'racun',
+            'penipu', 'scam', 'scammer', 'tipu-tipu',
+            'konspirasi', 'conspiracy', 'tersembunyi', 'hidden',
+            'manipulasi', 'manipulate', 'dipermainkan', 'played'
         ],
         'educational': [
             'cara', 'how to', 'tips', 'trik', 'trick',
             'tutorial', 'belajar', 'learn', 'pelajaran',
-            'lesson', 'panduan', 'guide'
+            'lesson', 'panduan', 'guide',
+            'strategi', 'strategy', 'teknik', 'technique',
+            'metode', 'method', 'sistem', 'system',
+            'formula', 'rumus', 'blueprint', 'framework',
+            'step', 'langkah', 'tahap', 'phase'
         ],
         'entertaining': [
             'lucu', 'funny', 'ngakak', 'hilarious',
             'kocak', 'gokil', 'epic', 'amazing',
-            'gila', 'crazy', 'insane'
+            'gila', 'crazy', 'insane',
+            'absurd', 'aneh', 'weird', 'unik', 'unique',
+            'tak terduga', 'unexpected', 'plot twist',
+            'dramatis', 'dramatic', 'spektakuler', 'spectacular'
+        ],
+        'money': [
+            'cuan', 'uang', 'money', 'duit', 'cash',
+            'omset', 'omzet', 'revenue', 'profit', 'untung',
+            'gaji', 'salary', 'income', 'penghasilan',
+            'closing', 'deal', 'sales', 'penjualan',
+            'investasi', 'investment', 'passive income',
+            'bonus', 'komisi', 'commission', 'fee'
+        ],
+        'urgency': [
+            'sekarang', 'now', 'segera', 'immediately',
+            'cepat', 'fast', 'quick', 'langsung', 'directly',
+            'deadline', 'terbatas', 'limited', 'eksklusif', 'exclusive',
+            'hari ini', 'today', 'malam ini', 'tonight',
+            'nunda', 'delay', 'terlambat', 'late', 'ketinggalan', 'miss out'
         ]
     }
+
+    # Meta topics that frequently go viral (Timoty playbook)
+    META_TOPICS = {
+        'youth_mistakes': {
+            'label': 'Kesalahan Anak Muda',
+            'keywords': [
+                'anak', 'muda', 'genz', 'gen-z', 'gen z', 'pemula', 'baru mulai',
+                'bar bar', 'barbar', 'ceroboh', 'grasa grusu', 'grusak grusuk',
+                'impulsif', 'sok cepat', 'ikut trend', 'ikut-ikutan'
+            ]
+        },
+        'money_poverty': {
+            'label': 'Uang dan Kemiskinan',
+            'keywords': [
+                'miskin', 'bokek', 'duit', 'uang', 'krisis', 'bangkrut',
+                'fakir', 'sultan', 'tajir', 'kekayaan', 'pas-pasan', 'utang',
+                'cicilan', 'rekening', 'dompet'
+            ]
+        },
+        'discipline_lazy': {
+            'label': 'Disiplin vs Malas',
+            'keywords': [
+                'malas', 'mager', 'rebahan', 'tidur', 'bangun siang',
+                'disiplin', 'kebiasaan', 'consistency', 'rutinitas',
+                'latihan', 'habit'
+            ]
+        },
+        'mental_slap': {
+            'label': 'Mental Slap',
+            'keywords': [
+                'tampar', 'mental', 'pahit', 'sadis', 'sadar', 'wake up',
+                'ngegas', 'keras', 'jleb', 'perih'
+            ]
+        },
+        'relationship_business': {
+            'label': 'Relationship & Bisnis',
+            'keywords': [
+                'relasi', 'network', 'jaringan', 'partner', 'tim', 'team',
+                'toxic friend', 'teman toxic', 'klien', 'client', 'bisnis',
+                'relationship', 'komunitas'
+            ]
+        },
+        'harsh_truth': {
+            'label': 'Kenyataan Pahit',
+            'keywords': [
+                'kenyataan', 'realita', 'pahit', 'jujur', 'sadis', 'fakta pahit',
+                'truth hurts', 'real talk'
+            ]
+        },
+        'poor_vs_success': {
+            'label': 'Miskin vs Sukses',
+            'keywords': [
+                'miskin', 'sukses', 'berhasil', 'kelas bawah', 'kelas atas',
+                'naik kelas', 'bangkit', 'zero to hero', 'kelas menengah'
+            ]
+        },
+        'life_paradox': {
+            'label': 'Paradoks Hidup',
+            'keywords': [
+                'paradoks', 'kontradiksi', 'balik fakta', 'double standard',
+                'aneh', 'tidak masuk akal', 'mind twist'
+            ]
+        },
+        'rich_mindset': {
+            'label': 'Mindset Kaya',
+            'keywords': [
+                'mindset', 'kaya', 'wealth', 'wealthy', 'millionaire',
+                'milyarder', 'cashflow', 'passive income', 'asset', 'aset'
+            ]
+        }
+    }
+
+    # Topics that rarely go viral (penalty)
+    RARE_TOPICS = [
+        'grafik', 'chart', 'spreadsheet', 'excel', 'data', 'dataset',
+        'statistik', 'statistic', 'crypto', 'coin', 'token', 'candlestick',
+        'whitepaper', 'algoritma', 'teknis', 'technical', 'diagram',
+        'infografis', 'mata uang kripto', 'analisis fundamental',
+        'analisis teknikal', 'pitch deck'
+    ]
+
+    # Relatability / mental slap triggers
+    MENTAL_SLAP_KEYWORDS = [
+        'malas', 'pemalas', 'mager', 'rebahan', 'insecure', 'takut gagal',
+        'takut ditolak', 'toxic friend', 'teman toxic', 'kerja keras',
+        'terlalu nyaman', 'zona nyaman', 'tanggung jawab', 'lamban',
+        'penakut', 'penunda', 'overthinking'
+    ]
+
+    # Text flash (FAKTOR 11) overlay configuration
+    TEXT_FLASH_ENABLED = True
+    TEXT_FLASH_DURATION = 0.8  # seconds
+    TEXT_FLASH_FONT_SIZE = 72
+    TEXT_FLASH_FONT_COLOR = 'white'
+    TEXT_FLASH_BG_COLOR = 'black@0.8'
+    TEXT_FLASH_POSITION = 'center'  # top, center, bottom
+    MAX_TEXT_FLASH_PER_CLIP = 3
+    TEXT_FLASH_VOCAB = [
+        'miskin', 'gagal', 'paradoks', 'diam bro', 'denger dulu', 'mental slap',
+        'bangkrut', 'toxic', 'sadis', 'malas', 'insecure', 'kerja keras',
+        'tanggung jawab', 'bangun', 'disiplin'
+    ]
     
     # Video export settings
     VIDEO_CODEC = 'libx264'
@@ -124,6 +268,22 @@ class Config:
     VIDEO_BITRATE = '2M'
     AUDIO_BITRATE = '128k'
     OUTPUT_FORMAT = 'mp4'
+    
+    # Aspect ratio settings (16:9 for viral content)
+    TARGET_ASPECT_RATIO = '16:9'
+    TARGET_WIDTH = 1920
+    TARGET_HEIGHT = 1080
+    
+    # Hook overlay settings
+    HOOK_ENABLED = True  # Enable automatic hook overlay
+    HOOK_DURATION = 1.2  # Preferred duration (seconds) within 0.5-1.5 range
+    HOOK_MIN_DURATION = 0.5  # Minimum hook display (seconds)
+    HOOK_MAX_DURATION = 1.5  # Preferred maximum (hard-clamped at 2s in runtime)
+    HOOK_FONT_SIZE = 48
+    HOOK_FONT_COLOR = 'white'
+    HOOK_BG_COLOR = 'black@0.7'  # Semi-transparent black background
+    HOOK_POSITION = 'center'  # Position: top, center, bottom
+    HOOK_ANIMATION = 'fade'  # Animation: fade, slide, none
     
     # Create folders if not exist
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
