@@ -37,7 +37,7 @@ class Config:
     # Upload settings
     UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'uploads')
     OUTPUT_FOLDER = os.path.join(os.path.dirname(__file__), 'outputs')
-    MAX_VIDEO_SIZE = 2 * 1024 * 1024 * 1024  # 2GB
+    MAX_VIDEO_SIZE = 7 * 1024 * 1024 * 1024  # 7GB
     MAX_VIDEO_DURATION = 3600  # 60 minutes in seconds
     ALLOWED_EXTENSIONS = {'mp4', 'mov', 'avi', 'mkv'}
     
