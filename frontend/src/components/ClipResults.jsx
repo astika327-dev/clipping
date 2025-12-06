@@ -1,9 +1,38 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import axios from 'axios'
 
 function ClipResults({ clips, jobId, onReset }) {
   const [selectedClip, setSelectedClip] = useState(null)
   const [downloading, setDownloading] = useState(false)
+  const [clipList, setClipList] = useState(Array.isArray(clips) ? clips : [])
+  const [loadingClips, setLoadingClips] = useState(false)
+  const fetchedRef = useRef(false)
+
+  useEffect(() => {
+    setClipList(Array.isArray(clips) ? clips : [])
+    if (Array.isArray(clips) && clips.length > 0) {
+      fetchedRef.current = true
+    } else if (Array.isArray(clips) && clips.length === 0) {
+      fetchedRef.current = false
+    }
+  }, [clips])
+
+  useEffect(() => {
+    if (fetchedRef.current) return
+    if (!jobId) return
+    setLoadingClips(true)
+    axios.get(`/api/status/${jobId}`)
+      .then(({ data }) => {
+        if (Array.isArray(data?.clips) && data.clips.length > 0) {
+          setClipList(data.clips)
+          fetchedRef.current = true
+        }
+      })
+      .catch((error) => {
+        console.error('Fetch clips fallback error:', error)
+      })
+      .finally(() => setLoadingClips(false))
+  }, [jobId])
 
   const getViralBadge = (score) => {
     if (score === 'Tinggi') return 'badge-success'
@@ -90,7 +119,7 @@ function ClipResults({ clips, jobId, onReset }) {
               🎉 Klip Berhasil Dibuat!
             </h2>
             <p className="text-white/70">
-              {clips.length} klip siap untuk di-upload ke TikTok
+              {clipList.length} klip siap untuk di-upload ke TikTok
             </p>
           </div>
           <div className="flex gap-3">
@@ -122,8 +151,20 @@ function ClipResults({ clips, jobId, onReset }) {
       </div>
 
       {/* Clips Grid */}
+      {loadingClips && clipList.length === 0 && (
+        <div className="card text-center text-white/60">
+          Sedang memuat daftar klip dari server...
+        </div>
+      )}
+
+      {!loadingClips && clipList.length === 0 && (
+        <div className="card text-center text-white/60">
+          Belum ada klip untuk job ini. Silakan proses ulang atau cek log backend.
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {clips.map((clip) => (
+        {clipList.map((clip) => (
           <div
             key={clip.id}
             className="card-hover group"

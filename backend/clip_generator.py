@@ -207,11 +207,6 @@ class ClipGenerator:
             style: 'funny', 'educational', 'dramatic', 'controversial', or 'balanced'
         """
         print("✂️ Generating clips...")
-        
-        # Store silence periods for dead air detection
-        self.silence_periods = audio_analysis.get('silence_periods', [])
-        if self.silence_periods:
-            print(f"🔇 Dead air detection active: {len(self.silence_periods)} silence periods found")
 
         # Store punchlines for text flash overlays
         analysis_data = audio_analysis.get('analysis', {})
@@ -319,16 +314,6 @@ class ClipGenerator:
             # Calculate viral score based on style
             viral_score = self._calculate_viral_score(segment, style)
             
-            # Apply dead air penalty if silence info available
-            if hasattr(self, 'silence_periods') and self.silence_periods:
-                silence_ratio = self._calculate_silence_ratio(
-                    segment['start'], 
-                    segment['end']
-                )
-                if silence_ratio > 0.3:  # More than 30% silence
-                    penalty = silence_ratio * 0.2  # Up to 20% penalty
-                    viral_score = max(0, viral_score - penalty)
-            
             # Determine category
             category = self._determine_category(segment)
             
@@ -346,24 +331,6 @@ class ClipGenerator:
         scored.sort(key=lambda x: x['viral_score'], reverse=True)
         
         return scored
-    
-    def _calculate_silence_ratio(self, start: float, end: float) -> float:
-        """Calculate what percentage of a segment is silence."""
-        if not hasattr(self, 'silence_periods') or not self.silence_periods:
-            return 0.0
-        
-        total_silence = 0.0
-        segment_duration = end - start
-        
-        for silence_start, silence_end in self.silence_periods:
-            # Calculate overlap between segment and silence period
-            overlap_start = max(start, silence_start)
-            overlap_end = min(end, silence_end)
-            
-            if overlap_end > overlap_start:
-                total_silence += (overlap_end - overlap_start)
-        
-        return total_silence / segment_duration if segment_duration > 0 else 0.0
     
     def _calculate_viral_score(self, segment: Dict, style: str) -> float:
         """
@@ -733,33 +700,9 @@ class ClipGenerator:
     
     def export_clip(self, clip: Dict, output_dir: str) -> str:
         """
-        Export a single clip using FFmpeg with 16:9 aspect ratio, optional hook overlay, and dead air removal
+        Export a single clip using FFmpeg with 16:9 aspect ratio and optional hook overlay
         """
         output_path = os.path.join(output_dir, clip['filename'])
-        
-        # Build audio filter for dead air removal
-        audio_filter = None
-        if getattr(self.config, 'ENABLE_DEAD_AIR_REMOVAL', True):
-            threshold_db = getattr(self.config, 'DEAD_AIR_THRESHOLD_DB', -35)
-            min_duration = getattr(self.config, 'MIN_DEAD_AIR_DURATION', 1.5)
-            padding = getattr(self.config, 'KEEP_SILENCE_PADDING', 0.2)
-            
-            # silenceremove filter: remove silence at start/end and in the middle
-            # start_periods=1: remove silence at the beginning
-            # start_threshold: audio below this is silence
-            # start_silence: how much starting silence to keep
-            # stop_periods=-1: remove all silence periods
-            # stop_threshold: audio below this is silence  
-            # stop_silence: keep this much silence between speech
-            audio_filter = (
-                f"silenceremove="
-                f"start_periods=1:"
-                f"start_threshold={threshold_db}dB:"
-                f"start_silence={padding}:"
-                f"stop_periods=-1:"
-                f"stop_threshold={threshold_db}dB:"
-                f"stop_silence={padding}"
-            )
         
         # Build video filter for 16:9 aspect ratio
         # Scale and pad/crop to 1920x1080 (16:9)
@@ -863,10 +806,6 @@ class ClipGenerator:
             '-t', str(clip['duration']),
             '-vf', composite_filter
         ]
-        
-        # Add audio filter if dead air removal is enabled
-        if audio_filter:
-            cmd.extend(['-af', audio_filter])
         
         # Add encoding parameters
         cmd.extend([

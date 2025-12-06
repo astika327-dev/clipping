@@ -49,16 +49,10 @@ class AudioAnalyzer:
         
         # Analyze content
         content_analysis = self._analyze_content(transcript)
-        
-        # Detect silence/dead air if enabled
-        silence_periods = []
-        if getattr(self.config, 'ENABLE_DEAD_AIR_REMOVAL', True):
-            silence_periods = self.detect_silence()
-        
+
         return {
             'transcript': transcript,
-            'analysis': content_analysis,
-            'silence_periods': silence_periods
+            'analysis': content_analysis
         }
     
     def _load_openai_whisper_model(self):
@@ -180,56 +174,6 @@ class AudioAnalyzer:
         # Remove punctuation and convert to lowercase
         words = re.findall(r'\b\w+\b', text.lower())
         return words
-    
-    def detect_silence(self) -> List[Tuple[float, float]]:
-        """Detect silence/dead air segments in audio using FFmpeg.
-        Returns list of (start_time, end_time) tuples for silence periods."""
-        import subprocess
-        
-        threshold_db = getattr(self.config, 'DEAD_AIR_THRESHOLD_DB', -35)
-        min_duration = getattr(self.config, 'MIN_DEAD_AIR_DURATION', 1.5)
-        
-        print(f"🔇 Detecting silence (threshold: {threshold_db}dB, min: {min_duration}s)...")
-        
-        cmd = [
-            'ffmpeg',
-            '-i', self.video_path,
-            '-af', f'silencedetect=n={threshold_db}dB:d={min_duration}',
-            '-f', 'null',
-            '-'
-        ]
-        
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                check=False
-            )
-            
-            silence_periods = []
-            lines = result.stderr.split('\n')
-            
-            silence_start = None
-            for line in lines:
-                if 'silencedetect' in line.lower():
-                    if 'silence_start' in line:
-                        match = re.search(r'silence_start: ([0-9.]+)', line)
-                        if match:
-                            silence_start = float(match.group(1))
-                    elif 'silence_end' in line and silence_start is not None:
-                        match = re.search(r'silence_end: ([0-9.]+)', line)
-                        if match:
-                            silence_end = float(match.group(1))
-                            silence_periods.append((silence_start, silence_end))
-                            silence_start = None
-            
-            print(f"✅ Found {len(silence_periods)} silence periods")
-            return silence_periods
-            
-        except Exception as e:
-            print(f"⚠️ Silence detection failed: {e}")
-            return []
 
     def _detect_meta_topic(self, text: str, words: List[str]) -> Tuple[str, float]:
         """Return the most relevant meta topic label and its strength (0-1)."""

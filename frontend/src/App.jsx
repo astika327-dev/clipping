@@ -144,7 +144,7 @@ function App() {
             />
           )}
 
-          {uiStep === 'results' && clips.length > 0 && (
+          {uiStep === 'results' && (
             <ClipResults
               clips={clips}
               jobId={jobId}

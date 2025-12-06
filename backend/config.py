@@ -81,12 +81,6 @@ class Config:
     SILENCE_THRESHOLD = -40  # dB
     MIN_SILENCE_DURATION = 1000  # milliseconds
     
-    # Dead air / silence removal
-    ENABLE_DEAD_AIR_REMOVAL = True  # Auto-cut silence gaps
-    DEAD_AIR_THRESHOLD_DB = -35  # Sound below this is considered silence (dB)
-    MIN_DEAD_AIR_DURATION = 1.5  # Minimum silence duration to cut (seconds)
-    KEEP_SILENCE_PADDING = 0.2  # Keep this much silence before/after speech (seconds)
-    
     # Filler words to remove (Indonesian & English)
     FILLER_WORDS = [
         'ehm', 'emm', 'umm', 'uh', 'um',
