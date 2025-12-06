@@ -441,40 +441,28 @@ class ClipGenerator:
             return 'custom'
     
     def _select_clips(self, scored_segments: List[Dict], target_duration: str) -> List[Dict]:
-        """
-        Select the best clips based on target duration
-        """
+        """Select clip segments quickly while guaranteeing minimum output."""
         selected = []
 
-        # Filter by target duration
         if target_duration != 'all':
             candidates = [s for s in scored_segments if s['suitable_duration'] == target_duration]
         else:
             candidates = [s for s in scored_segments if s['suitable_duration'] != 'custom']
 
-        # If no suitable candidates, try to adjust durations
         if not candidates:
             candidates = self._adjust_segment_durations(scored_segments, target_duration)
 
-        max_clips = getattr(self.config, 'MAX_CLIPS_PER_VIDEO', 10)
-        target_goal = min(getattr(self.config, 'TARGET_CLIP_COUNT', max_clips), max_clips)
-        min_required = min(
-            max(1, getattr(self.config, 'MIN_CLIP_OUTPUT', 1)),
-            max_clips
-        )
+        max_clips = max(1, getattr(self.config, 'MAX_CLIPS_PER_VIDEO', 15))
+        min_required = min(max_clips, max(1, getattr(self.config, 'MIN_CLIP_OUTPUT', 10)))
+        target_goal = min(max_clips, max(min_required, getattr(self.config, 'TARGET_CLIP_COUNT', min_required)))
+
         base_threshold = getattr(self.config, 'MIN_VIRAL_SCORE', 0.5)
-        relaxed_threshold = max(
-            getattr(self.config, 'RELAXED_VIRAL_SCORE', base_threshold - 0.1),
-            0.0
-        )
-        fallback_threshold = max(
-            getattr(self.config, 'FALLBACK_VIRAL_SCORE', relaxed_threshold - 0.1),
-            0.0
-        )
+        relaxed_threshold = max(getattr(self.config, 'RELAXED_VIRAL_SCORE', base_threshold - 0.1), 0.0)
+        fallback_threshold = max(getattr(self.config, 'FALLBACK_VIRAL_SCORE', relaxed_threshold - 0.1), 0.0)
 
         seen_keys = set()
 
-        def pick(threshold: float, limit: int):
+        def pick(threshold: float, limit: int) -> None:
             limit = min(limit, max_clips)
             if len(selected) >= limit:
                 return
@@ -491,28 +479,28 @@ class ClipGenerator:
                 selected.append(segment)
                 seen_keys.add(key)
 
-        # Phase 1: aim for high-quality clips
-        pick(base_threshold, target_goal)
-
-        # Phase 2: if still short on clips, relax slightly
-        if len(selected) < target_goal:
-            pick(relaxed_threshold, target_goal)
-
-        # Phase 3: fill remaining capacity with relaxed threshold
-        if len(selected) < max_clips:
-            pick(relaxed_threshold, max_clips)
-
-        # Phase 4: final fallback to guarantee output
-        if len(selected) < max_clips:
-            pick(fallback_threshold, max_clips)
-
-        # Fallback: If still no clips, take the top 3 best scoring segments regardless of threshold
-        if not selected and candidates:
-            print("⚠️ No clips met the viral score thresholds. Selecting top 3 candidates anyway.")
-            pick(-1.0, min(3, len(candidates)))
+        for threshold, limit in (
+            (base_threshold, target_goal),
+            (relaxed_threshold, target_goal),
+            (relaxed_threshold, max_clips),
+            (fallback_threshold, max_clips),
+        ):
+            pick(threshold, limit)
+            if len(selected) >= max_clips:
+                break
 
         if len(selected) < min_required and candidates:
-            pick(-1.0, min_required)
+            fallback_sorted = sorted(candidates, key=lambda item: item['viral_score'], reverse=True)
+            for segment in fallback_sorted:
+                if len(selected) >= min(max_clips, min_required):
+                    break
+                key = (round(segment['start'], 2), round(segment['end'], 2))
+                if key in seen_keys:
+                    continue
+                if not self._is_distinct_segment(segment, selected):
+                    continue
+                selected.append(segment)
+                seen_keys.add(key)
 
         return selected
     
@@ -623,10 +611,6 @@ class ClipGenerator:
                 hook_detail = self.hook_generator.generate(segment)
                 if hook_detail:
                     clip_payload['timoty_hook'] = hook_detail
-
-            text_flashes = self._build_text_flashes(clip_payload)
-            if text_flashes:
-                clip_payload['text_flashes'] = text_flashes
             clips.append(clip_payload)
         
         return clips
@@ -710,91 +694,6 @@ class ClipGenerator:
             f"scale=w={self.config.TARGET_WIDTH}:h={self.config.TARGET_HEIGHT}:force_original_aspect_ratio=decrease",
             f"pad={self.config.TARGET_WIDTH}:{self.config.TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black"
         ]
-        
-        # Add hook overlay if enabled and hook exists
-        # Add punchy text flash overlays (FAKTOR 11)
-        text_flashes = clip.get('text_flashes', [])
-        if getattr(self.config, 'TEXT_FLASH_ENABLED', True) and text_flashes:
-            flash_font = getattr(self.config, 'TEXT_FLASH_FONT_SIZE', 72)
-            flash_color = getattr(self.config, 'TEXT_FLASH_FONT_COLOR', 'white')
-            flash_bg = getattr(self.config, 'TEXT_FLASH_BG_COLOR', 'black@0.8')
-            position = getattr(self.config, 'TEXT_FLASH_POSITION', 'center')
-            if position == 'top':
-                flash_y = 'h*0.2'
-            elif position == 'bottom':
-                flash_y = 'h*0.8'
-            else:
-                flash_y = '(h-text_h)/2'
-            for flash in text_flashes:
-                text = flash['text'].replace("'", "'\\\\\\''").replace(":", "\\:")
-                start = flash['start']
-                end = flash['end']
-                video_filters.append(
-                    "drawtext=text='{}':fontfile=/Windows/Fonts/Arial.ttf:"
-                    "fontsize={}:fontcolor={}:box=1:boxcolor={}:boxborderw=15:"
-                    "x=(w-text_w)/2:y={}:enable='between(t,{:.2f},{:.2f})'".format(
-                        text,
-                        flash_font,
-                        flash_color,
-                        flash_bg,
-                        flash_y,
-                        start,
-                        end
-                    )
-                )
-
-        if self.config.HOOK_ENABLED and clip.get('timoty_hook'):
-            hook_text = clip['timoty_hook'].get('text', '').replace("'", "'\\\\\\''").replace(":", "\\:")
-            if hook_text:
-                # Create hook overlay filter with clamped duration
-                min_hook = getattr(self.config, 'HOOK_MIN_DURATION', 0.5)
-                max_hook = getattr(self.config, 'HOOK_MAX_DURATION', 1.5)
-                preferred = getattr(self.config, 'HOOK_DURATION', max_hook)
-                absolute_cap = 2.0  # Hard safety cap per requirement
-                hook_duration = max(
-                    min_hook,
-                    min(preferred, clip['duration'], max_hook, absolute_cap)
-                )
-                font_size = self.config.HOOK_FONT_SIZE
-                
-                # Position calculation
-                if self.config.HOOK_POSITION == 'top':
-                    y_pos = 'h*0.15'
-                elif self.config.HOOK_POSITION == 'bottom':
-                    y_pos = 'h*0.85'
-                else:  # center
-                    y_pos = '(h-text_h)/2'
-                
-                # Build drawtext filter with fade animation
-                if self.config.HOOK_ANIMATION == 'fade':
-                    # Fade timings adapt to short duration hooks
-                    fade_limit = hook_duration / 2
-                    fade_in = max(0.1, min(0.3, fade_limit))
-                    fade_out = max(0.1, min(0.3, fade_limit))
-                    hold_until = max(fade_in, hook_duration - fade_out)
-                    alpha_expr = (
-                        f"if(lt(t,{fade_in}),t/{fade_in},"
-                        f"if(lt(t,{hold_until}),1,"
-                        f"if(lt(t,{hook_duration}),1-(t-({hook_duration - fade_out}))/{fade_out},0)))"
-                    )
-                    text_filter = (
-                        "drawtext=text='{}':fontfile=/Windows/Fonts/Arial.ttf:fontsize={}:"
-                        "fontcolor={}:box=1:boxcolor={}:boxborderw=20:x=(w-text_w)/2:y={}:"
-                        "alpha='{}':enable='lt(t,{})'"
-                    ).format(
-                        hook_text,
-                        font_size,
-                        self.config.HOOK_FONT_COLOR,
-                        self.config.HOOK_BG_COLOR,
-                        y_pos,
-                        alpha_expr,
-                        hook_duration
-                    )
-                else:
-                    # No animation, just show and hide
-                    text_filter = f"drawtext=text='{hook_text}':fontfile=/Windows/Fonts/Arial.ttf:fontsize={font_size}:fontcolor={self.config.HOOK_FONT_COLOR}:box=1:boxcolor={self.config.HOOK_BG_COLOR}:boxborderw=20:x=(w-text_w)/2:y={y_pos}:enable='lt(t,{hook_duration})'"
-                
-                video_filters.append(text_filter)
         
         # FFmpeg command with filters
         composite_filter = ','.join(video_filters)

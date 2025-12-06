@@ -65,9 +65,9 @@ class Config:
     
     # Scoring thresholds
     MIN_VIRAL_SCORE = 0.5  # 0.0 to 1.0
-    MAX_CLIPS_PER_VIDEO = int(os.environ.get('MAX_CLIPS_PER_VIDEO', 5))
-    TARGET_CLIP_COUNT = int(os.environ.get('TARGET_CLIP_COUNT', 5))
-    MIN_CLIP_OUTPUT = int(os.environ.get('MIN_CLIP_OUTPUT', 15))
+    MAX_CLIPS_PER_VIDEO = int(os.environ.get('MAX_CLIPS_PER_VIDEO', 15))
+    TARGET_CLIP_COUNT = int(os.environ.get('TARGET_CLIP_COUNT', 10))
+    MIN_CLIP_OUTPUT = int(os.environ.get('MIN_CLIP_OUTPUT', 10))
     RELAXED_VIRAL_SCORE = float(os.environ.get('RELAXED_VIRAL_SCORE', 0.45))
     FALLBACK_VIRAL_SCORE = float(os.environ.get('FALLBACK_VIRAL_SCORE', 0.35))
     MIN_CLIP_GAP_SECONDS = float(os.environ.get('MIN_CLIP_GAP_SECONDS', 3.0))

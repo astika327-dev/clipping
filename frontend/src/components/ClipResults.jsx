@@ -110,7 +110,7 @@ function ClipResults({ clips, jobId, onReset }) {
   }
 
   return (
-    <div className="space-y-6">
+    <div id="clip-results" className="space-y-6">
       {/* Header */}
       <div className="card">
         <div className="flex items-center justify-between">

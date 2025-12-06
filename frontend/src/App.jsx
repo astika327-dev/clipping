@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import VideoUploader from './components/VideoUploader'
 import SettingsPanel from './components/SettingsPanel'
 import ProcessingStatus from './components/ProcessingStatus'
@@ -50,6 +50,18 @@ function App() {
     setProcessing(false)
     setUiStep('landing')
   }
+
+  useEffect(() => {
+    if (uiStep === 'results') {
+      const scrollTimer = setTimeout(() => {
+        document.getElementById('clip-results')?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start'
+        })
+      }, 0)
+      return () => clearTimeout(scrollTimer)
+    }
+  }, [uiStep, clips.length])
 
   return (
     <div className="min-h-screen py-8 px-4">
