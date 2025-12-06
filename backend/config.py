@@ -43,9 +43,9 @@ class Config:
     
     # Transcription settings
     TRANSCRIPTION_BACKEND = os.environ.get('TRANSCRIPTION_BACKEND', 'faster-whisper')
-    WHISPER_MODEL = os.environ.get('WHISPER_MODEL', 'tiny')  # tiny, base, small, medium, large
+    WHISPER_MODEL = os.environ.get('WHISPER_MODEL', 'large-v3')  # tiny, base, small, medium, large, large-v3
     WHISPER_LANGUAGE = os.environ.get('WHISPER_LANGUAGE', 'id')  # Default: Indonesian
-    FASTER_WHISPER_MODEL = os.environ.get('FASTER_WHISPER_MODEL', 'tiny')
+    FASTER_WHISPER_MODEL = os.environ.get('FASTER_WHISPER_MODEL', 'large-v3')
     FASTER_WHISPER_DEVICE = os.environ.get('FASTER_WHISPER_DEVICE', 'cpu')
     FASTER_WHISPER_COMPUTE_TYPE = os.environ.get('FASTER_WHISPER_COMPUTE_TYPE', 'int8_float16')
     FASTER_WHISPER_BEAM_SIZE = int(os.environ.get('FASTER_WHISPER_BEAM_SIZE', 1))
@@ -65,8 +65,8 @@ class Config:
     
     # Scoring thresholds
     MIN_VIRAL_SCORE = 0.5  # 0.0 to 1.0
-    MAX_CLIPS_PER_VIDEO = int(os.environ.get('MAX_CLIPS_PER_VIDEO', 30))
-    TARGET_CLIP_COUNT = int(os.environ.get('TARGET_CLIP_COUNT', 22))
+    MAX_CLIPS_PER_VIDEO = int(os.environ.get('MAX_CLIPS_PER_VIDEO', 5))
+    TARGET_CLIP_COUNT = int(os.environ.get('TARGET_CLIP_COUNT', 5))
     MIN_CLIP_OUTPUT = int(os.environ.get('MIN_CLIP_OUTPUT', 15))
     RELAXED_VIRAL_SCORE = float(os.environ.get('RELAXED_VIRAL_SCORE', 0.45))
     FALLBACK_VIRAL_SCORE = float(os.environ.get('FALLBACK_VIRAL_SCORE', 0.35))
