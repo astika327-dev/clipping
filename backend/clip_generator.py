@@ -569,6 +569,10 @@ class ClipGenerator:
         
         # Apply fallback multiplier to boost monolog/podcast scores slightly
         total_score *= fallback_multiplier
+
+        if is_fallback:
+            fallback_floor = getattr(self.config, 'FALLBACK_VIRAL_SCORE', 0.15) + 0.05
+            total_score = max(total_score, fallback_floor)
         
         return max(0.0, min(total_score, 1.0))
     
@@ -587,11 +591,12 @@ class ClipGenerator:
     
     def _check_duration_suitability(self, duration: float) -> str:
         """Check which duration category this segment fits"""
-        if 9 <= duration <= 15:
+        # Allow a bit of tolerance so fallback segments (monolog) still map to a bucket
+        if 8 <= duration <= 17:
             return 'short'
-        elif 18 <= duration <= 22:
+        elif 17 < duration <= 26:
             return 'medium'
-        elif 28 <= duration <= 32:
+        elif 26 < duration <= 36:
             return 'long'
         else:
             return 'custom'
@@ -600,6 +605,8 @@ class ClipGenerator:
         """Select clip segments quickly while guaranteeing minimum output."""
         selected = []
 
+        fallback_segments = [s for s in scored_segments if s.get('is_fallback')]
+
         if target_duration != 'all':
             candidates = [s for s in scored_segments if s['suitable_duration'] == target_duration]
         else:
@@ -607,6 +614,19 @@ class ClipGenerator:
 
         if not candidates:
             candidates = self._adjust_segment_durations(scored_segments, target_duration)
+
+        # Still empty? fall back to any segments (including fallback ones)
+        if not candidates and scored_segments:
+            candidates = scored_segments[:]
+
+        # Give priority to fallback monolog segments when no standard candidates available
+        if fallback_segments and len(candidates) < getattr(self.config, 'MIN_CLIP_OUTPUT', 5):
+            # extend while preserving order and avoiding duplicates
+            seen_ids = set(id(seg) for seg in candidates)
+            for seg in fallback_segments:
+                if id(seg) not in seen_ids:
+                    candidates.append(seg)
+                    seen_ids.add(id(seg))
 
         max_clips = max(1, getattr(self.config, 'MAX_CLIPS_PER_VIDEO', 15))
         min_required = min(max_clips, max(1, getattr(self.config, 'MIN_CLIP_OUTPUT', 10)))
@@ -628,7 +648,10 @@ class ClipGenerator:
                 key = (round(segment['start'], 2), round(segment['end'], 2))
                 if key in seen_keys:
                     continue
-                if segment['viral_score'] < threshold:
+                effective_threshold = threshold
+                if segment.get('is_fallback'):
+                    effective_threshold = min(threshold, fallback_threshold)
+                if segment['viral_score'] < effective_threshold:
                     continue
                 if not self._is_distinct_segment(segment, selected):
                     continue
