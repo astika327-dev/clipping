@@ -74,8 +74,8 @@ class Config:
     MAX_CLIP_OVERLAP_RATIO = float(os.environ.get('MAX_CLIP_OVERLAP_RATIO', 0.6))
     
     # Scene detection
-    SCENE_THRESHOLD = 27.0  # Lower = more sensitive
-    MIN_SCENE_LENGTH = 3  # Minimum scene length in seconds
+    SCENE_THRESHOLD = 18.0  # Lowered from 27.0 for more sensitive detection (better for monolog)
+    MIN_SCENE_LENGTH = 2  # Lowered from 3 for shorter clips in monolog/podcast
     
     # Audio analysis
     SILENCE_THRESHOLD = -40  # dB

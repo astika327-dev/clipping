@@ -232,12 +232,14 @@ class ClipGenerator:
     
     def _merge_analyses(self, video_analysis: Dict, audio_analysis: Dict) -> List[Dict]:
         """
-        Merge video scenes with audio segments
+        Merge video scenes with audio segments.
+        For monologs/podcasts with few scene changes, use time-based fallback segmentation.
         """
         print("🔗 Merging video and audio analysis...")
         
         scenes = video_analysis['scenes']
         audio_segments = audio_analysis['analysis']['segment_scores']
+        video_duration = video_analysis.get('duration', 0)
         
         merged = []
         
@@ -274,11 +276,149 @@ class ClipGenerator:
                     'audio': avg_audio_scores
                 })
         
+        # Fallback: If too few scenes (monolog/podcast), add time-based segments
+        if len(merged) < 3 and video_duration > 0 and audio_segments:
+            print(f"⚠️  Few scenes detected ({len(merged)}). Using time-based fallback for monolog/podcast...")
+            fallback_segments = self._create_time_based_segments(audio_segments, video_duration)
+            merged.extend(fallback_segments)
+            merged = sorted(merged, key=lambda x: x['start'])  # Sort by start time
+        
         return merged
     
     def _segments_overlap(self, seg1: Tuple[float, float], seg2: Tuple[float, float]) -> bool:
         """Check if two time segments overlap"""
         return seg1[0] <= seg2[1] and seg2[0] <= seg1[1]
+    
+    def _create_time_based_segments(self, audio_segments: List[Dict], video_duration: float) -> List[Dict]:
+        """
+        Create time-based segments for monolog/podcast videos with minimal scene changes.
+        Uses smart detection of pauses (silence) and audio quality to create natural breaks.
+        Falls back to fixed 25-second chunks if not enough pause points.
+        """
+        fallback_segments = []
+        
+        # Detect natural pause points in audio (silence, jeda)
+        pause_points = self._detect_pause_points(audio_segments)
+        
+        if pause_points and len(pause_points) > 2:
+            # Use pause-based segmentation
+            print(f"📍 Found {len(pause_points)} natural pause points in audio")
+            fallback_segments = self._segment_by_pauses(audio_segments, pause_points)
+        else:
+            # Fall back to time-based segmentation
+            fallback_segments = self._segment_by_time(audio_segments, video_duration)
+        
+        return fallback_segments
+    
+    def _detect_pause_points(self, audio_segments: List[Dict]) -> List[float]:
+        """
+        Detect natural pause points (silence or low engagement) in audio.
+        Returns list of timestamps where pauses occur.
+        """
+        pause_points = []
+        
+        for i in range(len(audio_segments) - 1):
+            current = audio_segments[i]
+            next_seg = audio_segments[i + 1]
+            
+            # Gap between segments might indicate a pause
+            gap = next_seg['start'] - current['end']
+            
+            # If there's a significant gap (>0.5s), it's likely a pause
+            if gap > 0.5:
+                pause_points.append((current['end'] + next_seg['start']) / 2)
+            
+            # Or if current segment has low engagement (podcast characteristic)
+            current_engagement = current['scores'].get('engagement', 0.5)
+            next_engagement = next_seg['scores'].get('engagement', 0.5)
+            
+            # Low engagement followed by higher engagement = pause point
+            if current_engagement < 0.3 and next_engagement > 0.5:
+                pause_points.append(current['end'])
+        
+        return pause_points
+    
+    def _segment_by_pauses(self, audio_segments: List[Dict], pause_points: List[float]) -> List[Dict]:
+        """Create segments around natural pause points."""
+        segments = []
+        
+        for i in range(len(pause_points) - 1):
+            start = pause_points[i]
+            end = pause_points[i + 1]
+            duration = end - start
+            
+            # Only use segments between 10-35 seconds
+            if 10 <= duration <= 35:
+                overlapping_audio = [
+                    seg for seg in audio_segments
+                    if self._segments_overlap((start, end), (seg['start'], seg['end']))
+                ]
+                
+                if overlapping_audio:
+                    combined_text = ' '.join([seg.get('text', '') for seg in overlapping_audio])
+                    avg_audio_scores = self._average_audio_scores(overlapping_audio)
+                    
+                    segments.append({
+                        'start': start,
+                        'end': end,
+                        'duration': duration,
+                        'text': combined_text,
+                        'visual': {
+                            'has_faces': True,
+                            'face_count': 1,
+                            'has_closeup': True,
+                            'motion_score': 0.35,
+                            'has_high_motion': False,
+                            'visual_engagement': 0.5
+                        },
+                        'audio': avg_audio_scores,
+                        'is_fallback': True
+                    })
+        
+        return segments
+    
+    def _segment_by_time(self, audio_segments: List[Dict], video_duration: float) -> List[Dict]:
+        """
+        Create fixed time-based segments for monolog/podcast videos.
+        Splits into 20-30 second chunks with 75% overlap for smooth transitions.
+        """
+        fallback_segments = []
+        segment_length = 25  # 25 seconds per segment
+        
+        start_time = 0
+        while start_time < video_duration:
+            end_time = min(start_time + segment_length, video_duration)
+            
+            # Find audio segments that overlap
+            overlapping_audio = [
+                seg for seg in audio_segments
+                if self._segments_overlap((start_time, end_time), (seg['start'], seg['end']))
+            ]
+            
+            if overlapping_audio:
+                combined_text = ' '.join([seg.get('text', '') for seg in overlapping_audio])
+                avg_audio_scores = self._average_audio_scores(overlapping_audio)
+                
+                fallback_segments.append({
+                    'start': start_time,
+                    'end': end_time,
+                    'duration': end_time - start_time,
+                    'text': combined_text,
+                    'visual': {
+                        'has_faces': True,
+                        'face_count': 1,
+                        'has_closeup': True,
+                        'motion_score': 0.35,
+                        'has_high_motion': False,
+                        'visual_engagement': 0.5
+                    },
+                    'audio': avg_audio_scores,
+                    'is_fallback': True
+                })
+            
+            start_time += segment_length * 0.75  # 75% overlap
+        
+        return fallback_segments
     
     def _average_audio_scores(self, segments: List[Dict]) -> Dict:
         """Average audio scores from multiple segments"""
@@ -335,10 +475,15 @@ class ClipGenerator:
     def _calculate_viral_score(self, segment: Dict, style: str) -> float:
         """
         Calculate viral potential score (0-1)
-        Enhanced for better viral detection with aggressive weighting
+        Enhanced for better viral detection with aggressive weighting.
+        Special boost for fallback segments (monolog/podcast).
         """
         visual = segment['visual']
         audio = segment['audio']
+        is_fallback = segment.get('is_fallback', False)
+        
+        # Fallback boost: for monolog/podcast, be more lenient with scoring
+        fallback_multiplier = 1.2 if is_fallback else 1.0
         
         # Enhanced base scores with higher weights for viral indicators
         hook_strength = audio.get('hook', 0) * 0.35  # Increased from 0.30
@@ -356,6 +501,10 @@ class ClipGenerator:
         
         # Visual engagement with higher priority
         visual_engagement = visual.get('visual_engagement', 0) * 0.25  # Increased from 0.20
+        
+        # For fallback (talking head), reduce visual penalty
+        if is_fallback and visual.get('has_faces'):
+            visual_engagement += 0.15  # Boost for assumed talking head
         
         # Pacing score - prefer shorter, punchier clips
         if segment['duration'] <= 15:
@@ -375,6 +524,10 @@ class ClipGenerator:
             style_bonus = audio.get('emotional', 0) * 0.15
         elif style == 'controversial':
             style_bonus = audio.get('controversial', 0) * 0.15
+        elif style == 'balanced':
+            # For balanced, use average of all content scores
+            style_bonus = (audio.get('entertaining', 0) + audio.get('educational', 0) + 
+                          audio.get('emotional', 0)) / 3 * 0.10
         
         # Visual bonuses - more aggressive
         visual_bonus = 0
@@ -413,6 +566,9 @@ class ClipGenerator:
             relatability_bonus -
             rare_topic_penalty
         )
+        
+        # Apply fallback multiplier to boost monolog/podcast scores slightly
+        total_score *= fallback_multiplier
         
         return max(0.0, min(total_score, 1.0))
     
