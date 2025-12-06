@@ -17,6 +17,7 @@ function App() {
     modelSize: 'medium'
   })
   const [processing, setProcessing] = useState(false)
+  const [uiStep, setUiStep] = useState('landing')
   const [jobId, setJobId] = useState(null)
   const [clips, setClips] = useState([])
 
@@ -24,12 +25,22 @@ function App() {
     setUploadedVideo(videoData)
     setClips([])
     setJobId(null)
+    setUiStep('ready')
+  }
+
+  const startProcessing = () => {
+    if (!uploadedVideo) return
+    const derivedJobId = uploadedVideo.filename.replace(/\./g, '_')
+    setJobId(derivedJobId)
+    setProcessing(true)
+    setUiStep('processing')
   }
 
   const handleProcessComplete = (result) => {
     setJobId(result.job_id)
-    setClips(result.clips)
+    setClips(result.clips || [])
     setProcessing(false)
+    setUiStep('results')
   }
 
   const handleReset = () => {
@@ -37,6 +48,7 @@ function App() {
     setClips([])
     setJobId(null)
     setProcessing(false)
+    setUiStep('landing')
   }
 
   return (
@@ -55,9 +67,11 @@ function App() {
         {/* Main Content */}
         <div className="space-y-8">
           <ResourceMonitor />
-          {!uploadedVideo ? (
+          {uiStep === 'landing' && (
             <VideoUploader onVideoUploaded={handleVideoUploaded} />
-          ) : !processing && clips.length === 0 ? (
+          )}
+
+          {uiStep === 'ready' && uploadedVideo && (
             <>
               <div className="card">
                 <div className="flex items-center justify-between mb-4">
@@ -110,18 +124,27 @@ function App() {
               <SettingsPanel
                 settings={settings}
                 onSettingsChange={setSettings}
-                onProcess={() => setProcessing(true)}
+                onProcessStart={startProcessing}
+                isProcessing={processing}
                 uploadedVideo={uploadedVideo}
               />
             </>
-          ) : processing ? (
+          )}
+
+          {uiStep === 'processing' && uploadedVideo && jobId && (
             <ProcessingStatus
               filename={uploadedVideo.filename}
+              jobId={jobId}
               settings={settings}
               onComplete={handleProcessComplete}
-              onError={() => setProcessing(false)}
+              onCancel={() => {
+                setProcessing(false)
+                setUiStep('ready')
+              }}
             />
-          ) : (
+          )}
+
+          {uiStep === 'results' && clips.length > 0 && (
             <ClipResults
               clips={clips}
               jobId={jobId}

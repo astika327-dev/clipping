@@ -1,12 +1,7 @@
-import { useState } from 'react'
-import axios from 'axios'
-
-function SettingsPanel({ settings, onSettingsChange, onProcess, uploadedVideo }) {
-  const [processing, setProcessing] = useState(false)
-
-  const handleProcess = async () => {
-    setProcessing(true)
-    onProcess()
+function SettingsPanel({ settings, onSettingsChange, onProcessStart, uploadedVideo, isProcessing }) {
+  const handleProcess = () => {
+    if (isProcessing) return
+    onProcessStart?.()
   }
 
   return (
@@ -152,11 +147,12 @@ function SettingsPanel({ settings, onSettingsChange, onProcess, uploadedVideo })
 
         {/* Process Button */}
         <button
+          type="button"
           onClick={handleProcess}
-          disabled={processing}
+          disabled={isProcessing}
           className="btn-primary w-full text-lg py-4"
         >
-          {processing ? (
+          {isProcessing ? (
             <span className="flex items-center justify-center">
               <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-3"></div>
               Processing...
