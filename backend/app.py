@@ -196,6 +196,20 @@ def download_youtube_video():
 
     data = request.get_json(silent=True) or {}
     url = (data.get('url') or '').strip()
+    requested_quality = (data.get('quality') or '1080p').strip().lower()
+
+    quality_formats = {
+        '360p': "bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[height<=360]",
+        '1080p': "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]",
+    }
+
+    # Normalize quality input (allow values like '360', '360p', etc.)
+    normalized_quality = requested_quality
+    if normalized_quality.endswith('p'):
+        normalized_quality = normalized_quality
+    elif normalized_quality.isdigit():
+        normalized_quality = f"{normalized_quality}p"
+    selected_format = quality_formats.get(normalized_quality, quality_formats['1080p'])
 
     if not url:
         return jsonify({'error': 'URL YouTube wajib diisi'}), 400
@@ -204,7 +218,7 @@ def download_youtube_video():
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     ydl_opts = {
-        'format': 'bv*+ba/best',
+        'format': selected_format,
         'merge_output_format': 'mp4',
         'outtmpl': os.path.join(Config.UPLOAD_FOLDER, '%(id)s.%(ext)s'),
         'noplaylist': True,
@@ -598,7 +612,7 @@ def get_all_clips():
     """
     try:
         clips = []
-        output_dir = config.OUTPUT_FOLDER
+        output_dir = Config.OUTPUT_FOLDER
         
         if not os.path.exists(output_dir):
             return jsonify({'clips': []})
@@ -680,7 +694,7 @@ def delete_clip(job_id, filename):
         if not filename.startswith('clip_') or not filename.endswith('.mp4'):
             return jsonify({'error': 'Invalid clip file'}), 400
         
-        clip_path = os.path.join(config.OUTPUT_FOLDER, job_id, filename)
+        clip_path = os.path.join(Config.OUTPUT_FOLDER, job_id, filename)
         
         if not os.path.exists(clip_path):
             return jsonify({'error': 'Clip not found'}), 404
@@ -766,6 +780,40 @@ def storage_info():
                         'size_mb': round(os.path.getsize(filepath) / (1024 * 1024), 2)
                     })
         
+        outputs_jobs = []
+        if os.path.exists(Config.OUTPUT_FOLDER):
+            for job_id in os.listdir(Config.OUTPUT_FOLDER):
+                if job_id == '.gitkeep':
+                    continue
+                job_path = os.path.join(Config.OUTPUT_FOLDER, job_id)
+                if not os.path.isdir(job_path):
+                    continue
+                job_size = get_folder_size(job_path)
+                clip_files = [
+                    fname for fname in os.listdir(job_path)
+                    if fname.startswith('clip_') and fname.endswith('.mp4')
+                ]
+                last_modified = None
+                try:
+                    latest_ts = max(
+                        (os.path.getmtime(os.path.join(job_path, fname)) for fname in os.listdir(job_path)),
+                        default=None
+                    )
+                    if latest_ts:
+                        last_modified = datetime.fromtimestamp(latest_ts).isoformat()
+                except Exception:
+                    last_modified = None
+                outputs_jobs.append({
+                    'id': job_id,
+                    'size_bytes': job_size,
+                    'size_mb': round(job_size / (1024 * 1024), 2),
+                    'size_gb': round(job_size / (1024 * 1024 * 1024), 2),
+                    'clip_count': len(clip_files),
+                    'last_modified': last_modified
+                })
+
+        outputs_jobs.sort(key=lambda job: job.get('last_modified') or '', reverse=True)
+
         return jsonify({
             'uploads': {
                 'total_bytes': uploads_size,
@@ -776,7 +824,8 @@ def storage_info():
             'outputs': {
                 'total_bytes': outputs_size,
                 'total_mb': round(outputs_size / (1024 * 1024), 2),
-                'total_gb': round(outputs_size / (1024 * 1024 * 1024), 2)
+                'total_gb': round(outputs_size / (1024 * 1024 * 1024), 2),
+                'jobs': outputs_jobs
             }
         })
     except Exception as e:
@@ -836,6 +885,29 @@ def delete_all_uploads():
     
     except Exception as e:
         print(f"Error deleting uploads: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/output/<job_id>', methods=['DELETE'])
+def delete_output_job(job_id):
+    """Delete all generated clips for a job."""
+    try:
+        if not is_safe_job_id(job_id):
+            return jsonify({'error': 'Invalid job id'}), 400
+
+        job_path = os.path.join(Config.OUTPUT_FOLDER, job_id)
+        if not os.path.exists(job_path):
+            return jsonify({'error': 'Job not found'}), 404
+
+        shutil.rmtree(job_path)
+
+        zip_path = os.path.join(Config.OUTPUT_FOLDER, f"{job_id}_clips.zip")
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
+
+        return jsonify({'success': True, 'message': f'Deleted clips for {job_id}'})
+    except Exception as e:
+        print(f"Error deleting generated clips: {e}")
         return jsonify({'error': str(e)}), 500
 
 

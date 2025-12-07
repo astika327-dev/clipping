@@ -7,6 +7,7 @@ function VideoUploader({ onVideoUploaded }) {
   const [error, setError] = useState(null)
   const [youtubeUrl, setYoutubeUrl] = useState('')
   const [downloading, setDownloading] = useState(false)
+  const [youtubeQuality, setYoutubeQuality] = useState('1080p')
   const fileInputRef = useRef(null)
 
   const handleDragOver = (e) => {
@@ -74,7 +75,7 @@ function VideoUploader({ onVideoUploaded }) {
     setError(null)
     setDownloading(true)
     try {
-      const response = await axios.post('/api/youtube', { url: trimmedUrl })
+      const response = await axios.post('/api/youtube', { url: trimmedUrl, quality: youtubeQuality })
       if (response.data.success) {
         onVideoUploaded(response.data)
         setYoutubeUrl('')
@@ -153,7 +154,7 @@ function VideoUploader({ onVideoUploaded }) {
         <label className="block text-sm font-semibold">
           Atau import langsung dari YouTube
         </label>
-        <div className="flex flex-col md:flex-row gap-3">
+        <div className="flex flex-col lg:flex-row gap-3">
           <input
             type="url"
             value={youtubeUrl}
@@ -162,6 +163,15 @@ function VideoUploader({ onVideoUploaded }) {
             className="input-field flex-1"
             disabled={downloading || uploading}
           />
+          <select
+            value={youtubeQuality}
+            onChange={(e) => setYoutubeQuality(e.target.value)}
+            className="input-field lg:w-32"
+            disabled={downloading || uploading}
+          >
+            <option value="1080p">1080p</option>
+            <option value="360p">360p</option>
+          </select>
           <button
             type="submit"
             disabled={downloading || uploading}

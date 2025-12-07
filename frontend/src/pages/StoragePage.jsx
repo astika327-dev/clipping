@@ -105,6 +105,28 @@ function StoragePage() {
     }
   }
 
+  const deleteGeneratedClips = async (jobId) => {
+    if (!window.confirm(`Delete all clips for ${jobId}?`)) return
+
+    try {
+      setDeleting(true)
+      const response = await fetch(`/api/output/${jobId}`, { method: 'DELETE' })
+      const result = await response.json()
+
+      if (response.ok) {
+        setMessage(`✅ Deleted clips for ${jobId}`)
+        setTimeout(() => fetchStorageInfo(), 500)
+      } else {
+        setMessage(`❌ ${result.error}`)
+      }
+    } catch (error) {
+      console.error('Error deleting generated clips:', error)
+      setMessage('Error deleting clips')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -162,17 +184,37 @@ function StoragePage() {
               </div>
               
               {storageData.outputs.jobs && storageData.outputs.jobs.length > 0 && (
-                <div className="mt-4 space-y-2 max-h-48 overflow-y-auto">
-                  {storageData.outputs.jobs.map((job, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => downloadGeneratedClips(job.id)}
-                      disabled={downloading}
-                      className="btn-secondary w-full text-sm py-2 flex items-center justify-center gap-2"
+                <div className="mt-4 space-y-3 max-h-60 overflow-y-auto">
+                  {storageData.outputs.jobs.map((job) => (
+                    <div
+                      key={job.id}
+                      className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 bg-white/5 rounded-lg"
                     >
-                      <Download size={14} />
-                      {job.id}
-                    </button>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-mono text-sm text-white truncate" title={job.id}>{job.id}</p>
+                        <p className="text-xs text-white/60 mt-1">
+                          {job.clip_count} clips • {job.size_mb} MB
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => downloadGeneratedClips(job.id)}
+                          disabled={downloading}
+                          className="btn-secondary btn-sm flex items-center gap-1.5"
+                        >
+                          <Download size={14} />
+                          Download
+                        </button>
+                        <button
+                          onClick={() => deleteGeneratedClips(job.id)}
+                          disabled={deleting}
+                          className="btn-danger btn-sm flex items-center gap-1.5"
+                        >
+                          <Trash2 size={14} />
+                          Delete
+                        </button>
+                      </div>
+                    </div>
                   ))}
                 </div>
               )}
