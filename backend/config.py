@@ -276,8 +276,8 @@ class Config:
     HWACCEL_OUTPUT_FORMAT = 'cuda'  # Keep frames on GPU to reduce memory transfers
     
     # GPU Filter Processing - Use CUDA filters for speed
-    USE_GPU_FILTERS = True  # Enable GPU-accelerated video filters
-    SCALE_FILTER = 'scale_cuda'  # Use CUDA-accelerated scaling instead of scale
+    USE_GPU_FILTERS = False  # Disable GPU filters due to compatibility issues, use CPU filters instead
+    SCALE_FILTER = 'scale'  # Use CPU-based scale (compatible with all codecs)
     
     # Batch processing for better GPU utilization
     ENABLE_BATCH_EXPORT = True  # Process multiple clips in parallel

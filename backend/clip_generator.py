@@ -1282,26 +1282,18 @@ class ClipGenerator:
         """
         Export a single clip using FFmpeg with ADVANCED GPU acceleration (NVIDIA CUDA)
         - Hardware-accelerated decoding (CUDA decoder)
-        - GPU-accelerated video filters (scale_cuda)
+        - CPU-based video filters (for compatibility) with GPU encoding
         - NVIDIA NVENC encoder with optimized settings
         - Supports both H.264 and H.265 (HEVC) codecs
         """
         output_path = os.path.join(output_dir, clip['filename'])
         
-        # Build GPU-accelerated video filters for 16:9 aspect ratio
-        # Using scale_cuda for GPU processing instead of CPU scale
-        if getattr(self.config, 'USE_GPU_FILTERS', False):
-            # GPU-accelerated filter chain
-            video_filters = [
-                f"scale_cuda=w={self.config.TARGET_WIDTH}:h={self.config.TARGET_HEIGHT}:force_original_aspect_ratio=decrease",
-                f"pad=w={self.config.TARGET_WIDTH}:h={self.config.TARGET_HEIGHT}:x=(ow-iw)/2:y=(oh-ih)/2:color=black"
-            ]
-        else:
-            # CPU-based filters (fallback)
-            video_filters = [
-                f"scale=w={self.config.TARGET_WIDTH}:h={self.config.TARGET_HEIGHT}:force_original_aspect_ratio=decrease",
-                f"pad={self.config.TARGET_WIDTH}:{self.config.TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black"
-            ]
+        # Build video filters for 16:9 aspect ratio
+        # Using CPU-based filters for better compatibility with GPU encoding
+        video_filters = [
+            f"scale=w={self.config.TARGET_WIDTH}:h={self.config.TARGET_HEIGHT}:force_original_aspect_ratio=decrease",
+            f"pad={self.config.TARGET_WIDTH}:{self.config.TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black"
+        ]
         
         composite_filter = ','.join(video_filters)
 
@@ -1315,7 +1307,7 @@ class ClipGenerator:
         if getattr(self.config, 'USE_GPU_ACCELERATION', True):
             cmd.extend([
                 '-hwaccel', getattr(self.config, 'HWACCEL_DECODER', 'cuda'),
-                '-hwaccel_output_format', getattr(self.config, 'HWACCEL_OUTPUT_FORMAT', 'cuda')
+                '-hwaccel_output_format', 'nv12',  # Use standard output format for compatibility
             ])
             if hasattr(self.config, 'GPU_DEVICE'):
                 cmd.extend([
