@@ -42,6 +42,18 @@ function ProcessingStatus({ filename, jobId, settings, onComplete, onCancel }) {
         use_timoty_hooks: settings.useTimotyHook,
         auto_caption: settings.autoCaption
       })
+      .then((response) => {
+        if (response.data.success) {
+          const result = {
+            job_id: response.data.job_id,
+            clips: response.data.clips,
+            status: 'completed',
+            message: 'Processing complete!'
+          }
+          stopPolling()
+          onComplete?.(result)
+        }
+      })
       .catch((error) => {
         console.error('Processing error:', error)
         handleError(error.response?.data?.error || 'Terjadi kesalahan saat mengeksekusi proses.')
@@ -161,13 +173,23 @@ function ProcessingStatus({ filename, jobId, settings, onComplete, onCancel }) {
             </div>
 
             <div className="grid md:grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={onCancel}
-                className="btn-secondary w-full text-sm py-3"
-              >
-                {status.status === 'error' ? 'Kembali & Coba Lagi' : 'Batalkan & Kembali' }
-              </button>
+              {status.status === 'completed' ? (
+                <button
+                  type="button"
+                  onClick={() => onComplete?.(status)}
+                  className="btn-primary w-full text-sm py-3 col-span-2 animate-pulse"
+                >
+                  Selesai! Lihat Hasil & Download
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onCancel}
+                  className="btn-secondary w-full text-sm py-3"
+                >
+                  {status.status === 'error' ? 'Kembali & Coba Lagi' : 'Batalkan & Kembali' }
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -207,20 +207,32 @@ class AudioAnalyzer:
     def _analyze_content(self, transcript: Dict) -> Dict:
         """
         Analyze transcript content for viral potential
+        GUARANTEED to return at least basic segment scores.
         """
         print("🧠 Analyzing content...")
         
-        segments = transcript['segments']
+        segments = transcript.get('segments', [])
+        
+        # Safety: If no segments, create placeholder
+        if not segments:
+            print("⚠️ No transcript segments! Creating placeholder...")
+            segments = [{
+                'id': 0,
+                'start': 0,
+                'end': 30,
+                'text': 'Audio content',
+                'words': ['audio', 'content']
+            }]
         
         # Analyze each segment
         segment_scores = []
         for segment in segments:
             score = self._score_segment(segment)
             segment_scores.append({
-                'segment_id': segment['id'],
-                'start': segment['start'],
-                'end': segment['end'],
-                'text': segment['text'],
+                'segment_id': segment.get('id', len(segment_scores)),
+                'start': segment.get('start', 0),
+                'end': segment.get('end', segment.get('start', 0) + 5),
+                'text': segment.get('text', ''),
                 'scores': score
             })
         
@@ -233,6 +245,8 @@ class AudioAnalyzer:
         # Overall content analysis
         overall = self._calculate_overall_scores(segment_scores)
         
+        print(f"📊 Analyzed {len(segment_scores)} segments")
+        
         return {
             'segment_scores': segment_scores,
             'hooks': hooks,
@@ -244,17 +258,22 @@ class AudioAnalyzer:
         """
         Score a single segment for various qualities
         Enhanced with money/urgency, meta topics, and relatability detection
+        Returns default scores if segment is empty.
         """
         raw_text = segment.get('text') or ''
         text = raw_text.lower()
-        words = segment['words']
+        words = segment.get('words', [])
+        
+        # If no words, extract from text
+        if not words and raw_text:
+            words = self._extract_words(raw_text)
         
         # Check for viral keywords (including new categories)
-        hook_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS['hook'])
-        emotional_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS['emotional'])
-        controversial_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS['controversial'])
-        educational_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS['educational'])
-        entertaining_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS['entertaining'])
+        hook_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS.get('hook', []))
+        emotional_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS.get('emotional', []))
+        controversial_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS.get('controversial', []))
+        educational_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS.get('educational', []))
+        entertaining_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS.get('entertaining', []))
         
         # NEW: Check for money and urgency keywords
         money_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS.get('money', []))

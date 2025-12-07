@@ -22,23 +22,60 @@ class VideoAnalyzer:
         """
         Main analysis function
         Returns comprehensive video analysis
+        GUARANTEED to return valid structure even if analysis fails.
         """
         print(f"🎬 Analyzing video: {self.video_path}")
         
-        # Get video metadata
-        metadata = self._get_video_metadata()
-        
-        # Detect scenes
-        scenes = self._detect_scenes()
-        
-        # Analyze each scene
-        scene_analysis = self._analyze_scenes(scenes)
-        
-        return {
-            'metadata': metadata,
-            'scenes': scene_analysis,
-            'total_scenes': len(scene_analysis)
-        }
+        try:
+            # Get video metadata
+            metadata = self._get_video_metadata()
+            
+            # Detect scenes
+            scenes = self._detect_scenes()
+            
+            # Analyze each scene
+            scene_analysis = self._analyze_scenes(scenes)
+            
+            return {
+                'metadata': metadata,
+                'scenes': scene_analysis,
+                'total_scenes': len(scene_analysis),
+                'duration': metadata.get('duration', 0)
+            }
+        except Exception as e:
+            print(f"⚠️ Video analysis error: {e}")
+            print("   Returning fallback analysis...")
+            
+            # Return minimal valid structure
+            duration = self._get_video_duration_fallback()
+            return {
+                'metadata': {
+                    'fps': 30,
+                    'frame_count': int(duration * 30),
+                    'width': 1920,
+                    'height': 1080,
+                    'duration': duration,
+                    'aspect_ratio': '1920:1080'
+                },
+                'scenes': [],
+                'total_scenes': 0,
+                'duration': duration
+            }
+    
+    def _get_video_duration_fallback(self) -> float:
+        """Get video duration using FFprobe as fallback."""
+        import subprocess
+        try:
+            cmd = [
+                'ffprobe', '-v', 'error',
+                '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                self.video_path
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            return float(result.stdout.strip())
+        except:
+            return 60.0  # Default 60 seconds
     
     def _get_video_metadata(self) -> Dict:
         """Get basic video information"""

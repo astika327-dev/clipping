@@ -199,6 +199,7 @@ class ClipGenerator:
                       hook_mode: str = None) -> List[Dict]:
         """
         Generate clips based on analysis
+        GUARANTEED to return at least FORCED_MIN_CLIP_OUTPUT clips.
         
         Args:
             video_analysis: Results from VideoAnalyzer
@@ -207,6 +208,7 @@ class ClipGenerator:
             style: 'funny', 'educational', 'dramatic', 'controversial', or 'balanced'
         """
         print("✂️ Generating clips...")
+        print(f"   Target duration: {target_duration}, Style: {style}")
 
         # Store punchlines for text flash overlays
         analysis_data = audio_analysis.get('analysis', {})
@@ -214,32 +216,213 @@ class ClipGenerator:
         if self.punchlines:
             print(f"⚡ Punchlines available: {len(self.punchlines)} total")
         
+        # Get audio segments count for debugging
+        audio_segments = analysis_data.get('segment_scores', [])
+        print(f"📊 Audio segments available: {len(audio_segments)}")
+        
         # Merge analyses
         segments = self._merge_analyses(video_analysis, audio_analysis)
         
+        if not segments:
+            print("⚠️ WARNING: No segments after merge! Creating emergency segments...")
+            segments = self._create_last_resort_segments(video_analysis, audio_analysis)
+        
         # Score and rank segments
         scored_segments = self._score_segments(segments, style)
+        print(f"📊 Scored segments: {len(scored_segments)}")
+        
+        # Debug: Show top 5 scores
+        if scored_segments:
+            top_scores = [s['viral_score'] for s in scored_segments[:5]]
+            print(f"   Top 5 viral scores: {[round(s, 2) for s in top_scores]}")
         
         # Select best segments
         selected = self._select_clips(scored_segments, target_duration)
+        print(f"📊 Selected segments: {len(selected)}")
+        
+        # GUARANTEE: If still 0, force create from any available data
+        forced_min = max(1, getattr(self.config, 'FORCED_MIN_CLIP_OUTPUT', 3))
+        if len(selected) < forced_min:
+            print(f"⚠️ Only {len(selected)} clips, need at least {forced_min}. Forcing creation...")
+            selected = self._guarantee_minimum_clips(selected, scored_segments, video_analysis, audio_analysis, forced_min)
         
         # Generate clip metadata
         clips = self._create_clip_metadata(selected, hook_mode=hook_mode)
         
         print(f"✅ Generated {len(clips)} clips")
         
+        # FINAL SAFETY CHECK
+        if len(clips) == 0:
+            print("🚨 CRITICAL: Still 0 clips! Creating absolute fallback...")
+            clips = self._create_absolute_fallback_clips(video_analysis, audio_analysis)
+        
+        return clips
+    
+    def _create_last_resort_segments(self, video_analysis: Dict, audio_analysis: Dict) -> List[Dict]:
+        """Create segments when everything else fails - uses video duration directly."""
+        video_duration = (
+            video_analysis.get('duration') or
+            video_analysis.get('metadata', {}).get('duration', 0) or
+            0
+        )
+        
+        # Try to get duration from audio if video duration is 0
+        audio_segments = audio_analysis.get('analysis', {}).get('segment_scores', [])
+        if video_duration <= 0 and audio_segments:
+            video_duration = max((seg.get('end', 0) for seg in audio_segments), default=60)
+        
+        # If still 0, assume 60 seconds minimum
+        if video_duration <= 0:
+            video_duration = 60
+            print(f"⚠️ Could not determine video duration. Using default: {video_duration}s")
+        
+        print(f"🆘 Creating last resort segments for {video_duration:.1f}s video")
+        
+        segments = []
+        segment_lengths = [15, 20, 25]  # Various lengths
+        
+        for length in segment_lengths:
+            start = 0
+            while start + length <= video_duration + 5:
+                end = min(start + length, video_duration)
+                if end - start >= 8:  # Minimum 8 seconds
+                    segments.append({
+                        'start': start,
+                        'end': end,
+                        'duration': end - start,
+                        'text': f'Segment {start:.0f}s - {end:.0f}s',
+                        'visual': {
+                            'has_faces': True, 'face_count': 1, 'has_closeup': True,
+                            'motion_score': 0.4, 'has_high_motion': False, 'visual_engagement': 0.5
+                        },
+                        'audio': {
+                            'hook': 0.3, 'engagement': 0.4, 'educational': 0.3,
+                            'emotional': 0.2, 'entertaining': 0.2, 'money': 0.1,
+                            'urgency': 0.1, 'mental_slap': 0.1, 'meta_topic_strength': 0.1,
+                            'controversial': 0.1, 'rare_topic': 0
+                        },
+                        'is_fallback': True,
+                        'is_last_resort': True
+                    })
+                start += length * 0.6
+        
+        print(f"🆘 Created {len(segments)} last resort segments")
+        return segments
+    
+    def _guarantee_minimum_clips(self, selected: List[Dict], scored: List[Dict], 
+                                  video_analysis: Dict, audio_analysis: Dict, 
+                                  min_count: int) -> List[Dict]:
+        """Guarantee we have at least min_count clips by any means necessary."""
+        if len(selected) >= min_count:
+            return selected
+        
+        result = list(selected)
+        seen_keys = set((round(s['start'], 2), round(s['end'], 2)) for s in result)
+        
+        # Step 1: Try to add from scored segments (ignore thresholds)
+        for seg in scored:
+            if len(result) >= min_count:
+                break
+            key = (round(seg['start'], 2), round(seg['end'], 2))
+            if key in seen_keys:
+                continue
+            # Only check for severe overlap
+            is_ok = True
+            for existing in result:
+                if self._calculate_overlap_ratio(existing, seg) > 0.85:
+                    is_ok = False
+                    break
+            if is_ok:
+                result.append(seg)
+                seen_keys.add(key)
+        
+        # Step 2: If still not enough, create new segments
+        if len(result) < min_count:
+            print(f"⚠️ Still only {len(result)} clips. Creating additional segments...")
+            extra_segments = self._create_last_resort_segments(video_analysis, audio_analysis)
+            
+            # Score and add them
+            for seg in extra_segments:
+                if len(result) >= min_count:
+                    break
+                key = (round(seg['start'], 2), round(seg['end'], 2))
+                if key in seen_keys:
+                    continue
+                # Check overlap
+                is_ok = True
+                for existing in result:
+                    if self._calculate_overlap_ratio(existing, seg) > 0.85:
+                        is_ok = False
+                        break
+                if is_ok:
+                    # Add required fields
+                    seg['viral_score'] = 0.3
+                    seg['category'] = 'educational'
+                    seg['suitable_duration'] = self._check_duration_suitability(seg['duration'])
+                    result.append(seg)
+                    seen_keys.add(key)
+        
+        print(f"✅ Guaranteed {len(result)} clips")
+        return result
+    
+    def _create_absolute_fallback_clips(self, video_analysis: Dict, audio_analysis: Dict) -> List[Dict]:
+        """ABSOLUTE LAST RESORT: Create clips even if everything else failed."""
+        print("🚨 ABSOLUTE FALLBACK: Creating emergency clips...")
+        
+        video_duration = (
+            video_analysis.get('duration') or
+            video_analysis.get('metadata', {}).get('duration', 0) or
+            60  # Default 60 seconds
+        )
+        
+        # Create 3 simple clips evenly spaced
+        clips = []
+        clip_length = min(20, video_duration / 3)  # 20 seconds or 1/3 of video
+        
+        for i in range(3):
+            start = i * (video_duration / 3)
+            end = min(start + clip_length, video_duration)
+            
+            if end - start >= 5:  # At least 5 seconds
+                clips.append({
+                    'id': i + 1,
+                    'filename': f'clip_{i + 1:03d}.mp4',
+                    'title': f'Clip {i + 1}',
+                    'start_time': self._format_timestamp(start),
+                    'end_time': self._format_timestamp(end),
+                    'start_seconds': start,
+                    'end_seconds': end,
+                    'duration': end - start,
+                    'viral_score': 'Rendah',
+                    'viral_score_numeric': 0.25,
+                    'reason': 'Auto-generated fallback',
+                    'category': 'educational',
+                    'transcript': f'Segment dari {start:.0f}s sampai {end:.0f}s'
+                })
+        
+        print(f"🚨 Created {len(clips)} absolute fallback clips")
         return clips
     
     def _merge_analyses(self, video_analysis: Dict, audio_analysis: Dict) -> List[Dict]:
         """
         Merge video scenes with audio segments.
         For monologs/podcasts with few scene changes, use time-based fallback segmentation.
+        GUARANTEED to return segments if audio_segments exist.
         """
         print("🔗 Merging video and audio analysis...")
         
-        scenes = video_analysis['scenes']
-        audio_segments = audio_analysis['analysis']['segment_scores']
-        video_duration = video_analysis.get('duration', 0)
+        scenes = video_analysis.get('scenes', [])
+        audio_segments = audio_analysis.get('analysis', {}).get('segment_scores', [])
+        video_duration = (
+            video_analysis.get('duration') or
+            video_analysis.get('metadata', {}).get('duration', 0) or
+            0
+        )
+        
+        # Fallback: estimate duration from audio segments if missing
+        if video_duration <= 0 and audio_segments:
+            video_duration = max(seg.get('end', 0) for seg in audio_segments)
+            print(f"📏 Estimated video duration from audio: {video_duration:.1f}s")
         
         merged = []
         
@@ -255,7 +438,7 @@ class ClipGenerator:
             
             if overlapping_audio:
                 # Combine text from overlapping segments
-                combined_text = ' '.join([seg['text'] for seg in overlapping_audio])
+                combined_text = ' '.join([seg.get('text', '') for seg in overlapping_audio])
                 
                 # Average audio scores
                 avg_audio_scores = self._average_audio_scores(overlapping_audio)
@@ -266,23 +449,45 @@ class ClipGenerator:
                     'duration': scene['duration'],
                     'text': combined_text,
                     'visual': {
-                        'has_faces': scene['has_faces'],
-                        'face_count': scene['face_count'],
-                        'has_closeup': scene['has_closeup'],
-                        'motion_score': scene['motion_score'],
-                        'has_high_motion': scene['has_high_motion'],
-                        'visual_engagement': scene['visual_engagement']
+                        'has_faces': scene.get('has_faces', True),
+                        'face_count': scene.get('face_count', 1),
+                        'has_closeup': scene.get('has_closeup', True),
+                        'motion_score': scene.get('motion_score', 0.3),
+                        'has_high_motion': scene.get('has_high_motion', False),
+                        'visual_engagement': scene.get('visual_engagement', 0.5)
                     },
                     'audio': avg_audio_scores
                 })
         
-        # Fallback: If too few scenes (monolog/podcast), add time-based segments
-        if len(merged) < 3 and video_duration > 0 and audio_segments:
-            print(f"⚠️  Few scenes detected ({len(merged)}). Using time-based fallback for monolog/podcast...")
-            fallback_segments = self._create_time_based_segments(audio_segments, video_duration)
-            merged.extend(fallback_segments)
-            merged = sorted(merged, key=lambda x: x['start'])  # Sort by start time
+        print(f"📊 Scene-based segments: {len(merged)}")
         
+        # ALWAYS create fallback segments for monolog/podcast (few or no scenes)
+        # This is the key fix - we need segments even when scenes are empty
+        if video_duration > 0 and audio_segments:
+            if len(merged) < 5:  # Always add fallback if fewer than 5 scene segments
+                print(f"⚠️  Few scenes detected ({len(merged)}). Creating time-based fallback for monolog/podcast...")
+                fallback_segments = self._create_time_based_segments(audio_segments, video_duration)
+                print(f"📊 Fallback segments created: {len(fallback_segments)}")
+                
+                # Add fallback segments that don't overlap too much with existing
+                for fb_seg in fallback_segments:
+                    is_unique = True
+                    for existing in merged:
+                        overlap = self._calculate_overlap_ratio(existing, fb_seg)
+                        if overlap > 0.5:
+                            is_unique = False
+                            break
+                    if is_unique:
+                        merged.append(fb_seg)
+                
+                merged = sorted(merged, key=lambda x: x['start'])
+        
+        # LAST RESORT: If still no segments, create from raw audio segments directly
+        if not merged and audio_segments:
+            print("🆘 No segments found. Creating emergency segments from audio directly...")
+            merged = self._create_emergency_segments(audio_segments, video_duration)
+        
+        print(f"📊 Total merged segments: {len(merged)}")
         return merged
     
     def _segments_overlap(self, seg1: Tuple[float, float], seg2: Tuple[float, float]) -> bool:
@@ -380,50 +585,151 @@ class ClipGenerator:
     def _segment_by_time(self, audio_segments: List[Dict], video_duration: float) -> List[Dict]:
         """
         Create fixed time-based segments for monolog/podcast videos.
-        Splits into 20-30 second chunks with 75% overlap for smooth transitions.
+        Uses multiple segment lengths (short, medium, long) to maximize clip variety.
         """
         fallback_segments = []
-        segment_length = 25  # 25 seconds per segment
         
-        start_time = 0
-        while start_time < video_duration:
-            end_time = min(start_time + segment_length, video_duration)
+        # Create segments at multiple lengths for variety
+        segment_configs = [
+            (12, 0.5),   # Short clips: 12s, 50% step
+            (20, 0.6),   # Medium clips: 20s, 60% step  
+            (28, 0.7),   # Long clips: 28s, 70% step
+        ]
+        
+        for segment_length, step_ratio in segment_configs:
+            start_time = 0
+            step = segment_length * step_ratio
             
-            # Find audio segments that overlap
-            overlapping_audio = [
-                seg for seg in audio_segments
-                if self._segments_overlap((start_time, end_time), (seg['start'], seg['end']))
-            ]
-            
-            if overlapping_audio:
-                combined_text = ' '.join([seg.get('text', '') for seg in overlapping_audio])
-                avg_audio_scores = self._average_audio_scores(overlapping_audio)
+            while start_time + segment_length <= video_duration + 5:  # Allow slight overflow
+                end_time = min(start_time + segment_length, video_duration)
+                actual_duration = end_time - start_time
+                
+                # Skip if segment is too short
+                if actual_duration < 8:
+                    start_time += step
+                    continue
+                
+                # Find audio segments that overlap
+                overlapping_audio = [
+                    seg for seg in audio_segments
+                    if self._segments_overlap((start_time, end_time), (seg['start'], seg['end']))
+                ]
+                
+                # ALWAYS create segment if we have audio OR if duration is valid
+                combined_text = ''
+                avg_audio_scores = {}
+                
+                if overlapping_audio:
+                    combined_text = ' '.join([seg.get('text', '') for seg in overlapping_audio])
+                    avg_audio_scores = self._average_audio_scores(overlapping_audio)
+                else:
+                    # Even without matching audio, create segment for monolog
+                    avg_audio_scores = {
+                        'hook': 0.3, 'engagement': 0.4, 'educational': 0.3,
+                        'emotional': 0.2, 'entertaining': 0.2
+                    }
                 
                 fallback_segments.append({
                     'start': start_time,
                     'end': end_time,
-                    'duration': end_time - start_time,
-                    'text': combined_text,
+                    'duration': actual_duration,
+                    'text': combined_text or f'Segment {start_time:.0f}s - {end_time:.0f}s',
                     'visual': {
                         'has_faces': True,
                         'face_count': 1,
                         'has_closeup': True,
                         'motion_score': 0.35,
                         'has_high_motion': False,
-                        'visual_engagement': 0.5
+                        'visual_engagement': 0.55  # Boosted for monolog
                     },
                     'audio': avg_audio_scores,
                     'is_fallback': True
                 })
-            
-            start_time += segment_length * 0.75  # 75% overlap
+                
+                start_time += step
         
         return fallback_segments
+    
+    def _create_emergency_segments(self, audio_segments: List[Dict], video_duration: float) -> List[Dict]:
+        """
+        EMERGENCY: Create segments directly from audio transcript when all else fails.
+        Groups consecutive audio segments into clip-length chunks.
+        """
+        if not audio_segments:
+            return []
+        
+        emergency_segments = []
+        
+        # Sort audio by start time
+        sorted_audio = sorted(audio_segments, key=lambda x: x.get('start', 0))
+        
+        # Group into ~15-25 second chunks
+        current_group = []
+        group_start = 0
+        
+        for seg in sorted_audio:
+            if not current_group:
+                current_group = [seg]
+                group_start = seg.get('start', 0)
+            else:
+                group_end = seg.get('end', seg.get('start', 0) + 5)
+                group_duration = group_end - group_start
+                
+                if group_duration <= 25:
+                    current_group.append(seg)
+                else:
+                    # Finalize current group
+                    if current_group:
+                        emergency_segments.append(
+                            self._create_segment_from_audio_group(current_group, group_start)
+                        )
+                    # Start new group
+                    current_group = [seg]
+                    group_start = seg.get('start', 0)
+        
+        # Don't forget the last group
+        if current_group:
+            emergency_segments.append(
+                self._create_segment_from_audio_group(current_group, group_start)
+            )
+        
+        print(f"🆘 Emergency segments created: {len(emergency_segments)}")
+        return emergency_segments
+    
+    def _create_segment_from_audio_group(self, audio_group: List[Dict], group_start: float) -> Dict:
+        """Create a single segment from a group of audio segments."""
+        group_end = max(seg.get('end', seg.get('start', 0) + 5) for seg in audio_group)
+        combined_text = ' '.join([seg.get('text', '') for seg in audio_group])
+        avg_scores = self._average_audio_scores(audio_group)
+        
+        return {
+            'start': group_start,
+            'end': group_end,
+            'duration': group_end - group_start,
+            'text': combined_text,
+            'visual': {
+                'has_faces': True,
+                'face_count': 1,
+                'has_closeup': True,
+                'motion_score': 0.35,
+                'has_high_motion': False,
+                'visual_engagement': 0.5
+            },
+            'audio': avg_scores,
+            'is_fallback': True,
+            'is_emergency': True
+        }
     
     def _average_audio_scores(self, segments: List[Dict]) -> Dict:
         """Average audio scores from multiple segments"""
         if not segments:
-            return {}
+            # Return default scores instead of empty dict
+            return {
+                'hook': 0.3, 'emotional': 0.2, 'controversial': 0.1,
+                'educational': 0.3, 'entertaining': 0.2, 'engagement': 0.4,
+                'money': 0.1, 'urgency': 0.1, 'mental_slap': 0.1,
+                'rare_topic': 0, 'meta_topic_strength': 0.1
+            }
         
         keys = [
             'hook', 'emotional', 'controversial', 'educational', 'entertaining',
@@ -433,10 +739,18 @@ class ClipGenerator:
         averaged = {}
         
         for key in keys:
-            values = [seg['scores'].get(key) for seg in segments if key in seg['scores']]
-            averaged[key] = sum(values) / len(values) if values else 0
+            values = []
+            for seg in segments:
+                scores = seg.get('scores', {})
+                if key in scores:
+                    values.append(scores[key])
+            averaged[key] = sum(values) / len(values) if values else 0.2  # Default 0.2 instead of 0
         
-        meta_topics = [seg['scores'].get('meta_topic') for seg in segments if seg['scores'].get('meta_topic')]
+        meta_topics = []
+        for seg in segments:
+            scores = seg.get('scores', {})
+            if scores.get('meta_topic'):
+                meta_topics.append(scores['meta_topic'])
         if meta_topics:
             averaged['meta_topic'] = Counter(meta_topics).most_common(1)[0][0]
         
@@ -590,34 +904,49 @@ class ClipGenerator:
         return max(categories.items(), key=lambda x: x[1])[0]
     
     def _check_duration_suitability(self, duration: float) -> str:
-        """Check which duration category this segment fits"""
-        # Allow a bit of tolerance so fallback segments (monolog) still map to a bucket
-        if 8 <= duration <= 17:
+        """Check which duration category this segment fits - LENIENT VERSION"""
+        # Very lenient ranges to ensure segments aren't filtered out
+        if 5 <= duration <= 18:
             return 'short'
-        elif 17 < duration <= 26:
+        elif 15 <= duration <= 28:
             return 'medium'
-        elif 26 < duration <= 36:
+        elif 25 <= duration <= 40:
             return 'long'
+        elif duration > 40:
+            return 'long'  # Map long segments to 'long' instead of 'custom'
+        elif duration >= 5:
+            return 'short'  # Map short segments to 'short' instead of 'custom'
         else:
-            return 'custom'
+            return 'custom'  # Only truly unusable segments
     
     def _select_clips(self, scored_segments: List[Dict], target_duration: str) -> List[Dict]:
         """Select clip segments quickly while guaranteeing minimum output."""
+        print(f"🎯 Selecting clips (target: {target_duration})...")
+        
+        if not scored_segments:
+            print("⚠️ No scored segments to select from!")
+            return []
+        
         selected = []
 
         fallback_segments = [s for s in scored_segments if s.get('is_fallback')]
+        print(f"   Fallback segments available: {len(fallback_segments)}")
 
         if target_duration != 'all':
-            candidates = [s for s in scored_segments if s['suitable_duration'] == target_duration]
+            candidates = [s for s in scored_segments if s.get('suitable_duration') == target_duration]
         else:
-            candidates = [s for s in scored_segments if s['suitable_duration'] != 'custom']
+            candidates = [s for s in scored_segments if s.get('suitable_duration') != 'custom']
+        
+        print(f"   Duration-matched candidates: {len(candidates)}")
 
         if not candidates:
             candidates = self._adjust_segment_durations(scored_segments, target_duration)
+            print(f"   After duration adjustment: {len(candidates)}")
 
         # Still empty? fall back to any segments (including fallback ones)
         if not candidates and scored_segments:
             candidates = scored_segments[:]
+            print(f"   Using all scored segments: {len(candidates)}")
 
         # Give priority to fallback monolog segments when no standard candidates available
         if fallback_segments and len(candidates) < getattr(self.config, 'MIN_CLIP_OUTPUT', 5):
@@ -627,14 +956,18 @@ class ClipGenerator:
                 if id(seg) not in seen_ids:
                     candidates.append(seg)
                     seen_ids.add(id(seg))
+            print(f"   After adding fallback priority: {len(candidates)}")
 
         max_clips = max(1, getattr(self.config, 'MAX_CLIPS_PER_VIDEO', 15))
-        min_required = min(max_clips, max(1, getattr(self.config, 'MIN_CLIP_OUTPUT', 10)))
+        min_required = min(max_clips, max(1, getattr(self.config, 'MIN_CLIP_OUTPUT', 3)))
         target_goal = min(max_clips, max(min_required, getattr(self.config, 'TARGET_CLIP_COUNT', min_required)))
 
-        base_threshold = getattr(self.config, 'MIN_VIRAL_SCORE', 0.5)
-        relaxed_threshold = max(getattr(self.config, 'RELAXED_VIRAL_SCORE', base_threshold - 0.1), 0.0)
-        fallback_threshold = max(getattr(self.config, 'FALLBACK_VIRAL_SCORE', relaxed_threshold - 0.1), 0.0)
+        base_threshold = getattr(self.config, 'MIN_VIRAL_SCORE', 0.10)
+        relaxed_threshold = max(getattr(self.config, 'RELAXED_VIRAL_SCORE', 0.05), 0.0)
+        fallback_threshold = max(getattr(self.config, 'FALLBACK_VIRAL_SCORE', 0.01), 0.0)
+
+        print(f"   Thresholds: base={base_threshold}, relaxed={relaxed_threshold}, fallback={fallback_threshold}")
+        print(f"   Goals: min={min_required}, target={target_goal}, max={max_clips}")
 
         seen_keys = set()
 
@@ -651,37 +984,49 @@ class ClipGenerator:
                 effective_threshold = threshold
                 if segment.get('is_fallback'):
                     effective_threshold = min(threshold, fallback_threshold)
-                if segment['viral_score'] < effective_threshold:
+                if segment.get('viral_score', 0) < effective_threshold:
                     continue
                 if not self._is_distinct_segment(segment, selected):
                     continue
                 selected.append(segment)
                 seen_keys.add(key)
 
+        # Progressive selection with decreasing thresholds
         for threshold, limit in (
             (base_threshold, target_goal),
             (relaxed_threshold, target_goal),
             (relaxed_threshold, max_clips),
             (fallback_threshold, max_clips),
+            (0.0, max_clips),  # ZERO threshold as final attempt
         ):
             pick(threshold, limit)
-            if len(selected) >= max_clips:
+            if len(selected) >= min_required:
                 break
+        
+        print(f"   After threshold passes: {len(selected)} selected")
 
+        # Force minimum if still not enough
         if len(selected) < min_required and candidates:
-            fallback_sorted = sorted(candidates, key=lambda item: item['viral_score'], reverse=True)
+            print(f"   Forcing minimum output...")
+            fallback_sorted = sorted(candidates, key=lambda item: item.get('viral_score', 0), reverse=True)
             for segment in fallback_sorted:
-                if len(selected) >= min(max_clips, min_required):
+                if len(selected) >= min_required:
                     break
                 key = (round(segment['start'], 2), round(segment['end'], 2))
                 if key in seen_keys:
                     continue
-                if not self._is_distinct_segment(segment, selected):
+                # More lenient overlap check for forced selection
+                is_ok = True
+                for existing in selected:
+                    if self._calculate_overlap_ratio(existing, segment) > 0.85:
+                        is_ok = False
+                        break
+                if not is_ok:
                     continue
                 selected.append(segment)
                 seen_keys.add(key)
 
-        forced_min = max(1, getattr(self.config, 'FORCED_MIN_CLIP_OUTPUT', 1))
+        forced_min = max(1, getattr(self.config, 'FORCED_MIN_CLIP_OUTPUT', 3))
         if len(selected) < forced_min:
             forced = self._force_minimum_output(
                 selected,
@@ -693,6 +1038,7 @@ class ClipGenerator:
             )
             selected.extend(forced)
 
+        print(f"   Final selection: {len(selected)} clips")
         return selected
     
     def _adjust_segment_durations(self, segments: List[Dict], target: str) -> List[Dict]:
@@ -775,14 +1121,31 @@ class ClipGenerator:
         max_clips: int,
         seen_keys: set,
     ) -> List[Dict]:
-        """Force output by picking best available fallback segments when nothing passes thresholds."""
-        pool = fallback_segments or candidates or []
+        """Force output by picking best available segments when nothing passes thresholds."""
+        # Priority: fallback > candidates > any scored segment
+        pool = []
+        
+        # Add fallback segments first (they're designed for monologs)
+        if fallback_segments:
+            pool.extend(fallback_segments)
+        
+        # Then add candidates that aren't in pool yet
+        pool_keys = set((round(s['start'], 2), round(s['end'], 2)) for s in pool)
+        for seg in candidates:
+            key = (round(seg['start'], 2), round(seg['end'], 2))
+            if key not in pool_keys:
+                pool.append(seg)
+                pool_keys.add(key)
+        
         if not pool:
+            print("⚠️ No segments available for forced output")
             return []
 
         forced = []
         target_total = min(max_clips, forced_min)
-        pool_sorted = sorted(pool, key=lambda seg: seg['viral_score'], reverse=True)
+        
+        # Sort by viral score but ensure variety by also considering time spread
+        pool_sorted = sorted(pool, key=lambda seg: seg.get('viral_score', 0), reverse=True)
 
         for segment in pool_sorted:
             if len(selected) + len(forced) >= target_total:
@@ -790,11 +1153,22 @@ class ClipGenerator:
             key = (round(segment['start'], 2), round(segment['end'], 2))
             if key in seen_keys:
                 continue
-            if not self._is_distinct_segment(segment, selected + forced):
+            
+            # Relax distinct check for forced output - only check severe overlap
+            is_ok = True
+            for existing in selected + forced:
+                overlap = self._calculate_overlap_ratio(existing, segment)
+                if overlap > 0.8:  # More lenient: only reject if >80% overlap
+                    is_ok = False
+                    break
+            
+            if not is_ok:
                 continue
+                
             forced.append(segment)
             seen_keys.add(key)
-
+        
+        print(f"🔧 Forced {len(forced)} clips to meet minimum output")
         return forced
     
     def _create_clip_metadata(self, segments: List[Dict], hook_mode: str = None) -> List[Dict]:

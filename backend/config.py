@@ -60,23 +60,23 @@ class Config:
         (18, 22),  # Medium clips
         (28, 32),  # Long clips
     ]
-    MIN_CLIP_DURATION = 9
+    MIN_CLIP_DURATION = 8  # Lowered from 9 for more flexibility
     MAX_CLIP_DURATION = 35
     
-    # Scoring thresholds
-    MIN_VIRAL_SCORE = 0.15  # More lenient to allow additional segments
+    # Scoring thresholds - VERY LENIENT for monolog support
+    MIN_VIRAL_SCORE = 0.10  # Lowered from 0.15
     MAX_CLIPS_PER_VIDEO = int(os.environ.get('MAX_CLIPS_PER_VIDEO', 15))
-    TARGET_CLIP_COUNT = int(os.environ.get('TARGET_CLIP_COUNT', 10))
+    TARGET_CLIP_COUNT = int(os.environ.get('TARGET_CLIP_COUNT', 8))
     MIN_CLIP_OUTPUT = int(os.environ.get('MIN_CLIP_OUTPUT', 3))  # Ensure at least 3 clips per run
     FORCED_MIN_CLIP_OUTPUT = int(os.environ.get('FORCED_MIN_CLIP_OUTPUT', 3))  # Hard guarantee for monologs
-    RELAXED_VIRAL_SCORE = float(os.environ.get('RELAXED_VIRAL_SCORE', 0.10))  # Further relaxed
-    FALLBACK_VIRAL_SCORE = float(os.environ.get('FALLBACK_VIRAL_SCORE', 0.05))  # Minimal threshold
-    MIN_CLIP_GAP_SECONDS = float(os.environ.get('MIN_CLIP_GAP_SECONDS', 3.0))
-    MAX_CLIP_OVERLAP_RATIO = float(os.environ.get('MAX_CLIP_OVERLAP_RATIO', 0.6))
+    RELAXED_VIRAL_SCORE = float(os.environ.get('RELAXED_VIRAL_SCORE', 0.05))  # Very relaxed
+    FALLBACK_VIRAL_SCORE = float(os.environ.get('FALLBACK_VIRAL_SCORE', 0.01))  # Near-zero threshold
+    MIN_CLIP_GAP_SECONDS = float(os.environ.get('MIN_CLIP_GAP_SECONDS', 2.0))  # Reduced gap
+    MAX_CLIP_OVERLAP_RATIO = float(os.environ.get('MAX_CLIP_OVERLAP_RATIO', 0.7))  # Allow more overlap
     
-    # Scene detection
-    SCENE_THRESHOLD = 18.0  # Lowered from 27.0 for more sensitive detection (better for monolog)
-    MIN_SCENE_LENGTH = 2  # Lowered from 3 for shorter clips in monolog/podcast
+    # Scene detection - VERY SENSITIVE for monolog
+    SCENE_THRESHOLD = 15.0  # Lowered further for monolog detection
+    MIN_SCENE_LENGTH = 1  # Allow even short scenes
     
     # Audio analysis
     SILENCE_THRESHOLD = -40  # dB

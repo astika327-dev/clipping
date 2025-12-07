@@ -1,11 +1,16 @@
 import { useEffect, useState } from 'react'
+import Navbar from './components/Navbar'
 import VideoUploader from './components/VideoUploader'
 import SettingsPanel from './components/SettingsPanel'
 import ProcessingStatus from './components/ProcessingStatus'
 import ClipResults from './components/ClipResults'
 import ResourceMonitor from './components/ResourceMonitor'
+import StoragePage from './pages/StoragePage'
+import GalleryPage from './pages/GalleryPage'
+import SettingsPage from './pages/SettingsPage'
 
 function App() {
+  const [currentPage, setCurrentPage] = useState('home')
   const [uploadedVideo, setUploadedVideo] = useState(null)
   const [settings, setSettings] = useState({
     language: 'id',
@@ -51,6 +56,13 @@ function App() {
     setUiStep('landing')
   }
 
+  const handlePageChange = (pageId) => {
+    setCurrentPage(pageId)
+    if (pageId === 'home') {
+      handleReset()
+    }
+  }
+
   useEffect(() => {
     if (uiStep === 'results') {
       const scrollTimer = setTimeout(() => {
@@ -64,111 +76,135 @@ function App() {
   }, [uiStep, clips.length])
 
   return (
-    <div className="min-h-screen py-8 px-4">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <header className="text-center mb-12">
-          <h1 className="text-5xl font-bold mb-4 bg-gradient-to-r from-primary-400 to-accent-400 bg-clip-text text-transparent">
-            🎬 AI Video Clipper
-          </h1>
-          <p className="text-xl text-white/70">
-            Otomatis potong video panjang jadi klip pendek viral untuk TikTok, Reels & Shorts
-          </p>
-        </header>
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800">
+      {/* Navbar */}
+      <Navbar currentPage={currentPage} onPageChange={handlePageChange} />
 
-        {/* Main Content */}
-        <div className="space-y-8">
-          <ResourceMonitor />
-          {uiStep === 'landing' && (
-            <VideoUploader onVideoUploaded={handleVideoUploaded} />
-          )}
-
-          {uiStep === 'ready' && uploadedVideo && (
+      {/* Main Content */}
+      <div className="py-8 px-4">
+        <div className="max-w-7xl mx-auto">
+          {currentPage === 'home' && (
             <>
-              <div className="card">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h3 className="text-xl font-semibold">Video Uploaded</h3>
-                    <p className="text-white/60 text-sm mt-1">
-                      {uploadedVideo.filename}
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleReset}
-                    className="btn-secondary"
-                  >
-                    Upload Baru
-                  </button>
-                </div>
-                <div className="grid grid-cols-3 gap-4 text-sm">
-                  <div>
-                    <span className="text-white/60">Ukuran:</span>
-                    <span className="ml-2 font-medium">
-                      {(uploadedVideo.size / (1024 * 1024)).toFixed(2)} MB
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-white/60">Durasi:</span>
-                    <span className="ml-2 font-medium">
-                      {Math.floor(uploadedVideo.duration / 60)}:{String(Math.floor(uploadedVideo.duration % 60)).padStart(2, '0')}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-white/60">Status:</span>
-                    <span className="ml-2 badge-success">Siap Diproses</span>
-                  </div>
-                </div>
-                {uploadedVideo.source === 'youtube' && (
-                  <div className="mt-4 glass rounded-lg p-4 text-sm">
-                    <p className="font-semibold flex items-center gap-2">
-                      <span>📺</span>
-                      Konten dari YouTube
-                    </p>
-                    <p className="text-white/70 mt-1">
-                      {uploadedVideo.title || 'Tanpa judul'}
-                      {uploadedVideo.channel ? ` • ${uploadedVideo.channel}` : ''}
-                    </p>
-                    <p className="text-white/50 text-xs mt-1 break-all">{uploadedVideo.url}</p>
-                  </div>
+              {/* Header */}
+              <header className="text-center mb-12">
+                <h1 className="text-5xl font-bold mb-4 bg-gradient-to-r from-primary-400 to-accent-400 bg-clip-text text-transparent">
+                  🎬 AI Video Clipper
+                </h1>
+                <p className="text-xl text-white/70">
+                  Otomatis potong video panjang jadi klip pendek viral untuk TikTok, Reels & Shorts
+                </p>
+              </header>
+
+              {/* Main Content */}
+              <div className="space-y-8">
+                <ResourceMonitor />
+                {uiStep === 'landing' && (
+                  <VideoUploader onVideoUploaded={setUploadedVideo} />
+                )}
+
+                {uiStep === 'ready' && uploadedVideo && (
+                  <>
+                    <div className="card">
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <h3 className="text-xl font-semibold">Video Uploaded</h3>
+                          <p className="text-white/60 text-sm mt-1">
+                            {uploadedVideo.filename}
+                          </p>
+                        </div>
+                        <button
+                          onClick={handleReset}
+                          className="btn-secondary"
+                        >
+                          Upload Baru
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-3 gap-4 text-sm">
+                        <div>
+                          <span className="text-white/60">Ukuran:</span>
+                          <span className="ml-2 font-medium">
+                            {(uploadedVideo.size / (1024 * 1024)).toFixed(2)} MB
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-white/60">Durasi:</span>
+                          <span className="ml-2 font-medium">
+                            {Math.floor(uploadedVideo.duration / 60)}:{String(Math.floor(uploadedVideo.duration % 60)).padStart(2, '0')}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-white/60">Status:</span>
+                          <span className="ml-2 badge-success">Siap Diproses</span>
+                        </div>
+                      </div>
+                      {uploadedVideo.source === 'youtube' && (
+                        <div className="mt-4 glass rounded-lg p-4 text-sm">
+                          <p className="font-semibold flex items-center gap-2">
+                            <span>📺</span>
+                            Konten dari YouTube
+                          </p>
+                          <p className="text-white/70 mt-1">
+                            {uploadedVideo.title || 'Tanpa judul'}
+                            {uploadedVideo.channel ? ` • ${uploadedVideo.channel}` : ''}
+                          </p>
+                          <p className="text-white/50 text-xs mt-1 break-all">{uploadedVideo.url}</p>
+                        </div>
+                      )}
+                    </div>
+
+                    <SettingsPanel
+                      settings={settings}
+                      onSettingsChange={setSettings}
+                      onProcessStart={() => {
+                        const derivedJobId = uploadedVideo.filename.replace(/\./g, '_')
+                        setJobId(derivedJobId)
+                        setProcessing(true)
+                        setUiStep('processing')
+                      }}
+                      isProcessing={processing}
+                      uploadedVideo={uploadedVideo}
+                    />
+                  </>
+                )}
+
+                {uiStep === 'processing' && uploadedVideo && jobId && (
+                  <ProcessingStatus
+                    filename={uploadedVideo.filename}
+                    jobId={jobId}
+                    settings={settings}
+                    onComplete={(result) => {
+                      setJobId(result.job_id)
+                      setClips(result.clips || [])
+                      setProcessing(false)
+                      setUiStep('results')
+                    }}
+                    onCancel={() => {
+                      setProcessing(false)
+                      setUiStep('ready')
+                    }}
+                  />
+                )}
+
+                {uiStep === 'results' && (
+                  <ClipResults
+                    clips={clips}
+                    jobId={jobId}
+                    onReset={handleReset}
+                  />
                 )}
               </div>
 
-              <SettingsPanel
-                settings={settings}
-                onSettingsChange={setSettings}
-                onProcessStart={startProcessing}
-                isProcessing={processing}
-                uploadedVideo={uploadedVideo}
-              />
+              {/* Footer */}
+              <footer className="mt-16 text-center text-white/40 text-sm">
+                <p>Dibuat dengan ❤️ untuk content creators Indonesia</p>
+              </footer>
             </>
           )}
 
-          {uiStep === 'processing' && uploadedVideo && jobId && (
-            <ProcessingStatus
-              filename={uploadedVideo.filename}
-              jobId={jobId}
-              settings={settings}
-              onComplete={handleProcessComplete}
-              onCancel={() => {
-                setProcessing(false)
-                setUiStep('ready')
-              }}
-            />
-          )}
-
-          {uiStep === 'results' && (
-            <ClipResults
-              clips={clips}
-              jobId={jobId}
-              onReset={handleReset}
-            />
-          )}
+          {currentPage === 'storage' && <StoragePage />}
+          {currentPage === 'gallery' && <GalleryPage />}
+          {currentPage === 'settings' && <SettingsPage />}
         </div>
-
-        {/* Footer */}
-        <footer className="mt-16 text-center text-white/40 text-sm">
-          <p>Dibuat dengan ❤️ untuk content creators Indonesia</p>
-        </footer>
       </div>
     </div>
   )

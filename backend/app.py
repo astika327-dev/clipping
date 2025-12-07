@@ -11,7 +11,7 @@ import shutil
 import re
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import traceback
 
 from config import Config
@@ -403,8 +403,32 @@ def process_video():
                     audio_analysis['transcript'].get('segments', [])
                 )
             
+            # CRITICAL CHECK: Ensure we have clips
+            if not clips:
+                print("🚨 CRITICAL: No clips generated! This should never happen.")
+                print("   Attempting emergency clip creation...")
+                # Last resort: create clips from video duration
+                video_duration = video_analysis.get('duration') or video_analysis.get('metadata', {}).get('duration', 60)
+                clips = [
+                    {
+                        'id': 1,
+                        'filename': 'clip_001.mp4',
+                        'title': 'Clip 1',
+                        'start_time': '0:00:00',
+                        'end_time': str(timedelta(seconds=min(20, video_duration))),
+                        'start_seconds': 0,
+                        'end_seconds': min(20, video_duration),
+                        'duration': min(20, video_duration),
+                        'viral_score': 'Rendah',
+                        'viral_score_numeric': 0.2,
+                        'reason': 'Emergency fallback',
+                        'category': 'educational',
+                        'transcript': 'Auto-generated clip'
+                    }
+                ]
+            
             # Step 4: Export Clips
-            processing_status[job_id]['message'] = 'Exporting clips...'
+            processing_status[job_id]['message'] = f'Exporting {len(clips)} clips...'
             processing_status[job_id]['progress'] = 85
             
             # Create output directory for this job
@@ -426,8 +450,8 @@ def process_video():
                     'clips': clips,
                     'video_analysis': video_analysis,
                     'audio_analysis': {
-                        'language': audio_analysis['transcript']['language'],
-                        'overall': audio_analysis['analysis']['overall']
+                        'language': audio_analysis.get('transcript', {}).get('language', 'unknown'),
+                        'overall': audio_analysis.get('analysis', {}).get('overall', {})
                     },
                     'options': {
                         'language': language,
@@ -435,6 +459,10 @@ def process_video():
                         'style': style,
                         'use_timoty_hooks': use_timoty_hooks,
                         'auto_caption': auto_caption
+                    },
+                    'stats': {
+                        'total_clips': len(clips),
+                        'exported_clips': len(exported_files)
                     }
                 }, f, indent=2, ensure_ascii=False)
             
@@ -442,19 +470,24 @@ def process_video():
             processing_status[job_id] = {
                 'status': 'completed',
                 'progress': 100,
-                'message': 'Processing complete!',
+                'message': f'Processing complete! Generated {len(clips)} clips.',
                 'clips': clips,
                 'job_id': job_id,
                 'output_dir': output_dir
             }
             
+            print(f"✅ Job {job_id} completed with {len(clips)} clips")
+            
             return jsonify({
                 'success': True,
                 'job_id': job_id,
-                'clips': clips
+                'clips': clips,
+                'total_clips': len(clips)
             })
         
         except Exception as e:
+            print(f"❌ Error in job {job_id}: {e}")
+            traceback.print_exc()
             processing_status[job_id] = {
                 'status': 'error',
                 'progress': 0,
@@ -563,6 +596,112 @@ def cleanup_job(job_id):
     
     except Exception as e:
         print(f"Error cleaning up: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+def get_folder_size(path):
+    """Calculate total folder size in bytes"""
+    total = 0
+    if os.path.exists(path):
+        for dirpath, dirnames, filenames in os.walk(path):
+            for filename in filenames:
+                filepath = os.path.join(dirpath, filename)
+                if os.path.exists(filepath):
+                    total += os.path.getsize(filepath)
+    return total
+
+
+@app.route('/api/storage', methods=['GET'])
+def storage_info():
+    """Get storage usage for uploads and outputs"""
+    try:
+        uploads_size = get_folder_size(Config.UPLOAD_FOLDER)
+        outputs_size = get_folder_size(Config.OUTPUT_FOLDER)
+        
+        # List files in uploads
+        uploads_files = []
+        if os.path.exists(Config.UPLOAD_FOLDER):
+            for filename in os.listdir(Config.UPLOAD_FOLDER):
+                if filename == '.gitkeep':
+                    continue
+                filepath = os.path.join(Config.UPLOAD_FOLDER, filename)
+                if os.path.isfile(filepath):
+                    uploads_files.append({
+                        'filename': filename,
+                        'size': os.path.getsize(filepath),
+                        'size_mb': round(os.path.getsize(filepath) / (1024 * 1024), 2)
+                    })
+        
+        return jsonify({
+            'uploads': {
+                'total_bytes': uploads_size,
+                'total_mb': round(uploads_size / (1024 * 1024), 2),
+                'total_gb': round(uploads_size / (1024 * 1024 * 1024), 2),
+                'files': uploads_files
+            },
+            'outputs': {
+                'total_bytes': outputs_size,
+                'total_mb': round(outputs_size / (1024 * 1024), 2),
+                'total_gb': round(outputs_size / (1024 * 1024 * 1024), 2)
+            }
+        })
+    except Exception as e:
+        print(f"Error getting storage info: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/upload/<filename>', methods=['DELETE'])
+def delete_upload(filename):
+    """Delete an uploaded video file"""
+    try:
+        # Validate filename
+        if not is_safe_filename(filename):
+            return jsonify({'error': 'Invalid filename'}), 400
+        
+        filepath = os.path.join(Config.UPLOAD_FOLDER, filename)
+        
+        # Ensure file is inside upload folder
+        if not os.path.abspath(filepath).startswith(os.path.abspath(Config.UPLOAD_FOLDER)):
+            return jsonify({'error': 'Invalid file path'}), 400
+        
+        if not os.path.exists(filepath):
+            return jsonify({'error': 'File not found'}), 404
+        
+        # Delete file
+        os.remove(filepath)
+        
+        return jsonify({'success': True, 'message': f'Deleted {filename}'})
+    
+    except Exception as e:
+        print(f"Error deleting file: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/upload/delete-all', methods=['POST'])
+def delete_all_uploads():
+    """Delete ALL uploaded videos (use with caution!)"""
+    try:
+        deleted = []
+        if os.path.exists(Config.UPLOAD_FOLDER):
+            for filename in os.listdir(Config.UPLOAD_FOLDER):
+                if filename == '.gitkeep':
+                    continue
+                filepath = os.path.join(Config.UPLOAD_FOLDER, filename)
+                if os.path.isfile(filepath):
+                    try:
+                        os.remove(filepath)
+                        deleted.append(filename)
+                    except Exception as e:
+                        print(f"Failed to delete {filename}: {e}")
+        
+        return jsonify({
+            'success': True,
+            'deleted_count': len(deleted),
+            'deleted_files': deleted
+        })
+    
+    except Exception as e:
+        print(f"Error deleting uploads: {e}")
         return jsonify({'error': str(e)}), 500
 
 
