@@ -11,7 +11,7 @@ import shutil
 import re
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import traceback
 
 from config import Config
@@ -720,7 +720,7 @@ def system_stats():
         node_stats = collect_process_stats('node')
 
         return jsonify({
-            'timestamp': datetime.now(datetime.UTC).isoformat().replace('+00:00', '') + 'Z',
+            'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', '') + 'Z',
             'cpu_percent': cpu_percent,
             'memory': {
                 'total_bytes': total_mem,
