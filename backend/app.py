@@ -560,6 +560,110 @@ def download_all_clips(job_id):
         print(f"Error creating ZIP: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/clips', methods=['GET'])
+def get_all_clips():
+    """
+    Get all exported clips across all jobs
+    Returns: List of clips with metadata
+    """
+    try:
+        clips = []
+        output_dir = config.OUTPUT_FOLDER
+        
+        if not os.path.exists(output_dir):
+            return jsonify({'clips': []})
+        
+        # Iterate through all job folders
+        for job_folder in os.listdir(output_dir):
+            job_path = os.path.join(output_dir, job_folder)
+            
+            if not os.path.isdir(job_path):
+                continue
+            
+            # Look for clip files
+            for filename in os.listdir(job_path):
+                if filename.endswith('.mp4') and filename.startswith('clip_'):
+                    clip_path = os.path.join(job_path, filename)
+                    
+                    try:
+                        # Get file info
+                        file_size = os.path.getsize(clip_path)
+                        mod_time = os.path.getmtime(clip_path)
+                        
+                        # Try to get video duration using ffprobe
+                        duration = 0
+                        try:
+                            probe_cmd = [
+                                'ffprobe', '-v', 'error',
+                                '-show_entries', 'format=duration',
+                                '-of', 'default=noprint_wrappers=1:nokey=1:nokey=1',
+                                clip_path
+                            ]
+                            result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=5)
+                            if result.stdout:
+                                duration = float(result.stdout.strip())
+                        except:
+                            duration = 0
+                        
+                        # Get metadata if available
+                        metadata = {}
+                        metadata_file = os.path.join(job_path, 'metadata.json')
+                        if os.path.exists(metadata_file):
+                            try:
+                                with open(metadata_file, 'r') as f:
+                                    metadata = json.load(f)
+                            except:
+                                metadata = {}
+                        
+                        clips.append({
+                            'id': f"{job_folder}-{filename}",
+                            'jobId': job_folder,
+                            'filename': filename,
+                            'size': file_size,
+                            'duration': duration,
+                            'exportedAt': datetime.fromtimestamp(mod_time).isoformat(),
+                            'metadata': metadata
+                        })
+                    except Exception as e:
+                        print(f"Error processing clip {filename}: {e}")
+                        continue
+        
+        # Sort by exported date (newest first)
+        clips.sort(key=lambda x: x['exportedAt'], reverse=True)
+        
+        return jsonify({'clips': clips})
+    
+    except Exception as e:
+        print(f"Error getting clips: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/delete/<job_id>/<filename>', methods=['DELETE'])
+def delete_clip(job_id, filename):
+    """
+    Delete a single clip file
+    """
+    try:
+        if not (is_safe_job_id(job_id) and is_safe_filename(filename)):
+            return jsonify({'error': 'Invalid parameters'}), 400
+        
+        # Only allow clip deletion
+        if not filename.startswith('clip_') or not filename.endswith('.mp4'):
+            return jsonify({'error': 'Invalid clip file'}), 400
+        
+        clip_path = os.path.join(config.OUTPUT_FOLDER, job_id, filename)
+        
+        if not os.path.exists(clip_path):
+            return jsonify({'error': 'Clip not found'}), 404
+        
+        os.remove(clip_path)
+        print(f"✅ Deleted clip: {clip_path}")
+        
+        return jsonify({'message': 'Clip deleted successfully'})
+    
+    except Exception as e:
+        print(f"Error deleting clip: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/preview/<job_id>/<filename>', methods=['GET'])
 def preview_clip(job_id, filename):
     """

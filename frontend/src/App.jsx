@@ -8,6 +8,7 @@ import ResourceMonitor from './components/ResourceMonitor'
 import StoragePage from './pages/StoragePage'
 import GalleryPage from './pages/GalleryPage'
 import SettingsPage from './pages/SettingsPage'
+import ClipsPage from './pages/ClipsPage'
 
 function App() {
   const [currentPage, setCurrentPage] = useState('home')
@@ -201,6 +202,7 @@ function App() {
             </>
           )}
 
+          {currentPage === 'clips' && <ClipsPage />}
           {currentPage === 'storage' && <StoragePage />}
           {currentPage === 'gallery' && <GalleryPage />}
           {currentPage === 'settings' && <SettingsPage />}

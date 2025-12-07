@@ -6,6 +6,7 @@ function Navbar({ currentPage, onPageChange }) {
 
   const pages = [
     { id: 'home', label: '🎬 Home', path: '/' },
+    { id: 'clips', label: '✂️ Clips', path: '/clips' },
     { id: 'storage', label: '💾 Storage', path: '/storage' },
     { id: 'gallery', label: '🖼️ Gallery', path: '/gallery' },
     { id: 'settings', label: '⚙️ Settings', path: '/settings' },
