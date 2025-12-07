@@ -263,7 +263,7 @@ class Config:
     # ALTERNATIVE: 'hevc_nvenc' for better compression (smaller file size, same quality)
     # VIDEO_CODEC = 'hevc_nvenc'  # H.265 HEVC - use if you want better compression
     AUDIO_CODEC = 'aac'
-    VIDEO_BITRATE = '4M'  # RTX 3060 can handle higher bitrate efficiently
+    VIDEO_BITRATE = '1M'  # Lower bitrate for smaller file size
     AUDIO_BITRATE = '192k'  # Better audio quality
     OUTPUT_FORMAT = 'mp4'
     
