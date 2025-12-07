@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
-import { Trash2, RefreshCw } from 'lucide-react'
+import { Trash2, RefreshCw, Download } from 'lucide-react'
 
 function StoragePage() {
   const [storageData, setStorageData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState(false)
+  const [downloading, setDownloading] = useState(false)
   const [message, setMessage] = useState('')
 
   useEffect(() => {
@@ -74,6 +75,36 @@ function StoragePage() {
     }
   }
 
+  const downloadGeneratedClips = async (jobId) => {
+    try {
+      setDownloading(true)
+      const response = await fetch(
+        `http://localhost:5000/api/download-all/${jobId}`,
+        { responseType: 'blob' }
+      )
+      
+      if (response.ok) {
+        const blob = await response.blob()
+        const url = window.URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.setAttribute('download', `${jobId}_clips.zip`)
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        window.URL.revokeObjectURL(url)
+        setMessage(`✅ Download started: ${jobId}_clips.zip`)
+      } else {
+        setMessage(`❌ Failed to download clips`)
+      }
+    } catch (error) {
+      console.error('Error downloading clips:', error)
+      setMessage('Error downloading clips')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -129,6 +160,22 @@ function StoragePage() {
                   ({storageData.outputs.total_mb} MB)
                 </p>
               </div>
+              
+              {storageData.outputs.jobs && storageData.outputs.jobs.length > 0 && (
+                <div className="mt-4 space-y-2 max-h-48 overflow-y-auto">
+                  {storageData.outputs.jobs.map((job, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => downloadGeneratedClips(job.id)}
+                      disabled={downloading}
+                      className="btn-secondary w-full text-sm py-2 flex items-center justify-center gap-2"
+                    >
+                      <Download size={14} />
+                      {job.id}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 

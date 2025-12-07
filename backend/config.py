@@ -257,12 +257,18 @@ class Config:
         'tanggung jawab', 'bangun', 'disiplin'
     ]
     
-    # Video export settings
-    VIDEO_CODEC = 'libx264'
+    # Video export settings - OPTIMIZED FOR GPU (NVIDIA CUDA)
+    VIDEO_CODEC = 'h264_nvenc'  # NVIDIA GPU encoder (faster than libx264)
     AUDIO_CODEC = 'aac'
-    VIDEO_BITRATE = '2M'
+    VIDEO_BITRATE = '3M'  # Can use higher bitrate with GPU
     AUDIO_BITRATE = '128k'
     OUTPUT_FORMAT = 'mp4'
+    
+    # GPU Acceleration settings
+    USE_GPU_ACCELERATION = True
+    GPU_DEVICE = 0  # Default GPU device (0 for first GPU)
+    NVENC_PRESET = 'fast'  # Options: default, slow, medium, fast (faster = lower quality)
+    HWACCEL_DECODER = 'cuda'  # Hardware-accelerated decoding
     
     # Aspect ratio settings (16:9 for viral content)
     TARGET_ASPECT_RATIO = '16:9'

@@ -1280,7 +1280,8 @@ class ClipGenerator:
     
     def export_clip(self, clip: Dict, output_dir: str) -> str:
         """
-        Export a single clip using FFmpeg with 16:9 aspect ratio and optional hook overlay
+        Export a single clip using FFmpeg with GPU acceleration (NVIDIA CUDA)
+        Supports 16:9 aspect ratio and optional hook overlay
         """
         output_path = os.path.join(output_dir, clip['filename'])
         
@@ -1291,35 +1292,95 @@ class ClipGenerator:
             f"pad={self.config.TARGET_WIDTH}:{self.config.TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black"
         ]
         
-        # FFmpeg command with filters
+        # FFmpeg command with GPU acceleration
         composite_filter = ','.join(video_filters)
 
         cmd = [
             'ffmpeg',
+        ]
+        
+        # Add hardware acceleration if GPU is enabled
+        if getattr(self.config, 'USE_GPU_ACCELERATION', True):
+            cmd.extend([
+                '-hwaccel', getattr(self.config, 'HWACCEL_DECODER', 'cuda'),
+                '-hwaccel_device', str(getattr(self.config, 'GPU_DEVICE', 0))
+            ])
+        
+        cmd.extend([
             '-i', self.video_path,
             '-ss', str(clip['start_seconds']),
             '-t', str(clip['duration']),
             '-vf', composite_filter
-        ]
-        
-        # Add encoding parameters
-        cmd.extend([
-            '-c:v', self.config.VIDEO_CODEC,
-            '-b:v', self.config.VIDEO_BITRATE,
-            '-c:a', self.config.AUDIO_CODEC,
-            '-b:a', self.config.AUDIO_BITRATE,
-            '-preset', 'fast',  # Faster encoding
-            '-y',  # Overwrite output file
-            output_path
         ])
+        
+        # Add encoding parameters (GPU optimized)
+        if getattr(self.config, 'USE_GPU_ACCELERATION', True) and self.config.VIDEO_CODEC == 'h264_nvenc':
+            # NVIDIA GPU encoder with optimized settings
+            cmd.extend([
+                '-c:v', self.config.VIDEO_CODEC,
+                '-preset', getattr(self.config, 'NVENC_PRESET', 'fast'),  # GPU preset
+                '-b:v', self.config.VIDEO_BITRATE,
+                '-c:a', self.config.AUDIO_CODEC,
+                '-b:a', self.config.AUDIO_BITRATE,
+                '-y',  # Overwrite output file
+                output_path
+            ])
+        else:
+            # Fallback to CPU encoding if GPU not available
+            cmd.extend([
+                '-c:v', 'libx264',
+                '-b:v', self.config.VIDEO_BITRATE,
+                '-c:a', self.config.AUDIO_CODEC,
+                '-b:a', self.config.AUDIO_BITRATE,
+                '-preset', 'fast',
+                '-y',
+                output_path
+            ])
         
         # Run FFmpeg
         try:
+            print(f"   🎬 GPU Acceleration: {getattr(self.config, 'USE_GPU_ACCELERATION', True)} | Codec: {self.config.VIDEO_CODEC}")
             result = subprocess.run(cmd, check=True, capture_output=True, text=True)
             return output_path
         except subprocess.CalledProcessError as e:
             print(f"❌ Error exporting clip: {e}")
             print(f"   FFmpeg stderr: {e.stderr}")
+            # Fallback to CPU if GPU fails
+            print(f"   ⚠️  Fallback to CPU encoding...")
+            return self._export_clip_cpu_fallback(clip, output_dir)
+    
+    def _export_clip_cpu_fallback(self, clip: Dict, output_dir: str) -> str:
+        """
+        Fallback CPU-based export if GPU fails
+        """
+        output_path = os.path.join(output_dir, clip['filename'])
+        
+        video_filters = [
+            f"scale=w={self.config.TARGET_WIDTH}:h={self.config.TARGET_HEIGHT}:force_original_aspect_ratio=decrease",
+            f"pad={self.config.TARGET_WIDTH}:{self.config.TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black"
+        ]
+        composite_filter = ','.join(video_filters)
+        
+        cmd = [
+            'ffmpeg',
+            '-i', self.video_path,
+            '-ss', str(clip['start_seconds']),
+            '-t', str(clip['duration']),
+            '-vf', composite_filter,
+            '-c:v', 'libx264',
+            '-b:v', self.config.VIDEO_BITRATE,
+            '-c:a', self.config.AUDIO_CODEC,
+            '-b:a', self.config.AUDIO_BITRATE,
+            '-preset', 'medium',
+            '-y',
+            output_path
+        ]
+        
+        try:
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            return output_path
+        except subprocess.CalledProcessError as e:
+            print(f"❌ CPU fallback also failed: {e}")
             return None
     
     def export_all_clips(self, clips: List[Dict], output_dir: str) -> List[str]:
