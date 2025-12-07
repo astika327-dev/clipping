@@ -46,8 +46,8 @@ class Config:
     WHISPER_MODEL = os.environ.get('WHISPER_MODEL', 'large-v3')  # tiny, base, small, medium, large, large-v3
     WHISPER_LANGUAGE = os.environ.get('WHISPER_LANGUAGE', 'id')  # Default: Indonesian
     FASTER_WHISPER_MODEL = os.environ.get('FASTER_WHISPER_MODEL', 'large-v3')
-    FASTER_WHISPER_DEVICE = os.environ.get('FASTER_WHISPER_DEVICE', 'cpu')
-    FASTER_WHISPER_COMPUTE_TYPE = os.environ.get('FASTER_WHISPER_COMPUTE_TYPE', 'int8_float16')
+    FASTER_WHISPER_DEVICE = os.environ.get('FASTER_WHISPER_DEVICE', 'cuda')  # RTX 3060: use CUDA
+    FASTER_WHISPER_COMPUTE_TYPE = os.environ.get('FASTER_WHISPER_COMPUTE_TYPE', 'float16')  # Optimized for RTX 3060
     FASTER_WHISPER_BEAM_SIZE = int(os.environ.get('FASTER_WHISPER_BEAM_SIZE', 1))
     FASTER_WHISPER_CHUNK_LENGTH = int(os.environ.get('FASTER_WHISPER_CHUNK_LENGTH', 30))
     PROCESSING_CONCURRENCY = int(os.environ.get('PROCESSING_CONCURRENCY', 1))
@@ -257,18 +257,31 @@ class Config:
         'tanggung jawab', 'bangun', 'disiplin'
     ]
     
-    # Video export settings - OPTIMIZED FOR GPU (NVIDIA CUDA)
+    # Video export settings - OPTIMIZED FOR GPU (NVIDIA CUDA / RTX 3060)
     VIDEO_CODEC = 'h264_nvenc'  # NVIDIA GPU encoder (faster than libx264)
+    # ALTERNATIVE: 'hevc_nvenc' for better compression (smaller file size, same quality)
+    # VIDEO_CODEC = 'hevc_nvenc'  # H.265 HEVC - use if you want better compression
     AUDIO_CODEC = 'aac'
-    VIDEO_BITRATE = '3M'  # Can use higher bitrate with GPU
-    AUDIO_BITRATE = '128k'
+    VIDEO_BITRATE = '4M'  # RTX 3060 can handle higher bitrate efficiently
+    AUDIO_BITRATE = '192k'  # Better audio quality
     OUTPUT_FORMAT = 'mp4'
     
-    # GPU Acceleration settings
+    # GPU Acceleration settings - ADVANCED
     USE_GPU_ACCELERATION = True
     GPU_DEVICE = 0  # Default GPU device (0 for first GPU)
-    NVENC_PRESET = 'fast'  # Options: default, slow, medium, fast (faster = lower quality)
-    HWACCEL_DECODER = 'cuda'  # Hardware-accelerated decoding
+    NVENC_PRESET = 'medium'  # Options: slow, medium, fast (slow=best quality, fast=speed)
+    NVENC_RC_MODE = 'vbr'  # Rate control: vbr (variable), cbr (constant), cqp (fixed QP)
+    NVENC_QUALITY = 25  # Quality (0=best, 51=worst) for CQP mode
+    HWACCEL_DECODER = 'cuda'  # Hardware-accelerated decoding (NVIDIA CUDA)
+    HWACCEL_OUTPUT_FORMAT = 'cuda'  # Keep frames on GPU to reduce memory transfers
+    
+    # GPU Filter Processing - Use CUDA filters for speed
+    USE_GPU_FILTERS = True  # Enable GPU-accelerated video filters
+    SCALE_FILTER = 'scale_cuda'  # Use CUDA-accelerated scaling instead of scale
+    
+    # Batch processing for better GPU utilization
+    ENABLE_BATCH_EXPORT = True  # Process multiple clips in parallel
+    MAX_PARALLEL_EXPORTS = 2  # RTX 3060: max 2 concurrent exports (adjust based on VRAM)
     
     # Aspect ratio settings (16:9 for viral content)
     TARGET_ASPECT_RATIO = '16:9'

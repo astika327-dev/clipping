@@ -1280,31 +1280,47 @@ class ClipGenerator:
     
     def export_clip(self, clip: Dict, output_dir: str) -> str:
         """
-        Export a single clip using FFmpeg with GPU acceleration (NVIDIA CUDA)
-        Supports 16:9 aspect ratio and optional hook overlay
+        Export a single clip using FFmpeg with ADVANCED GPU acceleration (NVIDIA CUDA)
+        - Hardware-accelerated decoding (CUDA decoder)
+        - GPU-accelerated video filters (scale_cuda)
+        - NVIDIA NVENC encoder with optimized settings
+        - Supports both H.264 and H.265 (HEVC) codecs
         """
         output_path = os.path.join(output_dir, clip['filename'])
         
-        # Build video filter for 16:9 aspect ratio
-        # Scale and pad/crop to 1920x1080 (16:9)
-        video_filters = [
-            f"scale=w={self.config.TARGET_WIDTH}:h={self.config.TARGET_HEIGHT}:force_original_aspect_ratio=decrease",
-            f"pad={self.config.TARGET_WIDTH}:{self.config.TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black"
-        ]
+        # Build GPU-accelerated video filters for 16:9 aspect ratio
+        # Using scale_cuda for GPU processing instead of CPU scale
+        if getattr(self.config, 'USE_GPU_FILTERS', False):
+            # GPU-accelerated filter chain
+            video_filters = [
+                f"scale_cuda=w={self.config.TARGET_WIDTH}:h={self.config.TARGET_HEIGHT}:force_original_aspect_ratio=decrease",
+                f"pad=w={self.config.TARGET_WIDTH}:h={self.config.TARGET_HEIGHT}:x=(ow-iw)/2:y=(oh-ih)/2:color=black"
+            ]
+        else:
+            # CPU-based filters (fallback)
+            video_filters = [
+                f"scale=w={self.config.TARGET_WIDTH}:h={self.config.TARGET_HEIGHT}:force_original_aspect_ratio=decrease",
+                f"pad={self.config.TARGET_WIDTH}:{self.config.TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black"
+            ]
         
-        # FFmpeg command with GPU acceleration
         composite_filter = ','.join(video_filters)
 
         cmd = [
             'ffmpeg',
+            '-hide_banner',  # Reduce verbose output
+            '-loglevel', 'warning',  # Only show warnings and errors
         ]
         
-        # Add hardware acceleration if GPU is enabled
+        # Add hardware-accelerated DECODING if enabled
         if getattr(self.config, 'USE_GPU_ACCELERATION', True):
             cmd.extend([
                 '-hwaccel', getattr(self.config, 'HWACCEL_DECODER', 'cuda'),
-                '-hwaccel_device', str(getattr(self.config, 'GPU_DEVICE', 0))
+                '-hwaccel_output_format', getattr(self.config, 'HWACCEL_OUTPUT_FORMAT', 'cuda')
             ])
+            if hasattr(self.config, 'GPU_DEVICE'):
+                cmd.extend([
+                    '-hwaccel_device', str(getattr(self.config, 'GPU_DEVICE', 0))
+                ])
         
         cmd.extend([
             '-i', self.video_path,
@@ -1313,13 +1329,16 @@ class ClipGenerator:
             '-vf', composite_filter
         ])
         
-        # Add encoding parameters (GPU optimized)
-        if getattr(self.config, 'USE_GPU_ACCELERATION', True) and self.config.VIDEO_CODEC == 'h264_nvenc':
-            # NVIDIA GPU encoder with optimized settings
+        # Add encoding parameters (ADVANCED GPU OPTIMIZATION)
+        if getattr(self.config, 'USE_GPU_ACCELERATION', True) and self.config.VIDEO_CODEC in ['h264_nvenc', 'hevc_nvenc']:
+            # NVIDIA NVENC encoder with advanced settings
             cmd.extend([
                 '-c:v', self.config.VIDEO_CODEC,
-                '-preset', getattr(self.config, 'NVENC_PRESET', 'fast'),  # GPU preset
-                '-b:v', self.config.VIDEO_BITRATE,
+                '-preset', getattr(self.config, 'NVENC_PRESET', 'medium'),  # slow/medium/fast
+                '-rc', getattr(self.config, 'NVENC_RC_MODE', 'vbr'),  # Rate control mode
+                '-b:v', self.config.VIDEO_BITRATE,  # Target bitrate
+                '-maxrate', self.config.VIDEO_BITRATE,  # Max bitrate
+                '-bufsize', f"{int(int(self.config.VIDEO_BITRATE.rstrip('M')) * 2)}M",  # Buffer size = 2x bitrate
                 '-c:a', self.config.AUDIO_CODEC,
                 '-b:a', self.config.AUDIO_BITRATE,
                 '-y',  # Overwrite output file
@@ -1329,22 +1348,29 @@ class ClipGenerator:
             # Fallback to CPU encoding if GPU not available
             cmd.extend([
                 '-c:v', 'libx264',
+                '-preset', 'fast',  # CPU preset
+                '-crf', '23',  # Quality (lower = better, 23 = good default)
                 '-b:v', self.config.VIDEO_BITRATE,
                 '-c:a', self.config.AUDIO_CODEC,
                 '-b:a', self.config.AUDIO_BITRATE,
-                '-preset', 'fast',
                 '-y',
                 output_path
             ])
         
-        # Run FFmpeg
+        # Run FFmpeg with GPU acceleration
         try:
-            print(f"   🎬 GPU Acceleration: {getattr(self.config, 'USE_GPU_ACCELERATION', True)} | Codec: {self.config.VIDEO_CODEC}")
+            gpu_enabled = getattr(self.config, 'USE_GPU_ACCELERATION', True)
+            gpu_filters = getattr(self.config, 'USE_GPU_FILTERS', False)
+            print(f"   🎬 GPU Acceleration: {gpu_enabled} | GPU Filters: {gpu_filters} | Codec: {self.config.VIDEO_CODEC}")
+            print(f"   🔧 Preset: {getattr(self.config, 'NVENC_PRESET', 'medium')} | Bitrate: {self.config.VIDEO_BITRATE}")
+            
             result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            print(f"   ✅ Clip exported successfully: {os.path.basename(output_path)}")
             return output_path
         except subprocess.CalledProcessError as e:
             print(f"❌ Error exporting clip: {e}")
-            print(f"   FFmpeg stderr: {e.stderr}")
+            if e.stderr:
+                print(f"   FFmpeg stderr: {e.stderr[:500]}")  # Show first 500 chars of error
             # Fallback to CPU if GPU fails
             print(f"   ⚠️  Fallback to CPU encoding...")
             return self._export_clip_cpu_fallback(clip, output_dir)
