@@ -681,6 +681,18 @@ class ClipGenerator:
                 selected.append(segment)
                 seen_keys.add(key)
 
+        forced_min = max(1, getattr(self.config, 'FORCED_MIN_CLIP_OUTPUT', 1))
+        if len(selected) < forced_min:
+            forced = self._force_minimum_output(
+                selected,
+                candidates,
+                fallback_segments,
+                forced_min,
+                max_clips,
+                seen_keys,
+            )
+            selected.extend(forced)
+
         return selected
     
     def _adjust_segment_durations(self, segments: List[Dict], target: str) -> List[Dict]:
@@ -753,6 +765,37 @@ class ClipGenerator:
         overlap = end - start
         shortest = max(0.01, min(seg_a['duration'], seg_b['duration']))
         return overlap / shortest
+
+    def _force_minimum_output(
+        self,
+        selected: List[Dict],
+        candidates: List[Dict],
+        fallback_segments: List[Dict],
+        forced_min: int,
+        max_clips: int,
+        seen_keys: set,
+    ) -> List[Dict]:
+        """Force output by picking best available fallback segments when nothing passes thresholds."""
+        pool = fallback_segments or candidates or []
+        if not pool:
+            return []
+
+        forced = []
+        target_total = min(max_clips, forced_min)
+        pool_sorted = sorted(pool, key=lambda seg: seg['viral_score'], reverse=True)
+
+        for segment in pool_sorted:
+            if len(selected) + len(forced) >= target_total:
+                break
+            key = (round(segment['start'], 2), round(segment['end'], 2))
+            if key in seen_keys:
+                continue
+            if not self._is_distinct_segment(segment, selected + forced):
+                continue
+            forced.append(segment)
+            seen_keys.add(key)
+
+        return forced
     
     def _create_clip_metadata(self, segments: List[Dict], hook_mode: str = None) -> List[Dict]:
         """
