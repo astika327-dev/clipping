@@ -99,7 +99,7 @@ function App() {
               <div className="space-y-8">
                 <ResourceMonitor />
                 {uiStep === 'landing' && (
-                  <VideoUploader onVideoUploaded={setUploadedVideo} />
+                  <VideoUploader onVideoUploaded={handleVideoUploaded} />
                 )}
 
                 {uiStep === 'ready' && uploadedVideo && (
