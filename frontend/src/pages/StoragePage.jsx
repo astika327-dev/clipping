@@ -15,7 +15,7 @@ function StoragePage() {
   const fetchStorageInfo = async () => {
     try {
       setLoading(true)
-      const response = await fetch('http://localhost:5000/api/storage')
+      const response = await fetch('/api/storage')
       const data = await response.json()
       setStorageData(data)
     } catch (error) {
@@ -32,7 +32,7 @@ function StoragePage() {
     try {
       setDeleting(true)
       const response = await fetch(
-        `http://localhost:5000/api/upload/${encodeURIComponent(filename)}`,
+        `/api/upload/${encodeURIComponent(filename)}`,
         { method: 'DELETE' }
       )
       const result = await response.json()
@@ -56,7 +56,7 @@ function StoragePage() {
 
     try {
       setDeleting(true)
-      const response = await fetch('http://localhost:5000/api/upload/delete-all', {
+      const response = await fetch('/api/upload/delete-all', {
         method: 'POST'
       })
       const result = await response.json()
@@ -79,7 +79,7 @@ function StoragePage() {
     try {
       setDownloading(true)
       const response = await fetch(
-        `http://localhost:5000/api/download-all/${jobId}`,
+        `/api/download-all/${jobId}`,
         { responseType: 'blob' }
       )
       

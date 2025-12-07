@@ -371,23 +371,33 @@ def process_video():
         # For now, we'll process synchronously
         
         try:
-            # Step 1: Video Analysis
-            processing_status[job_id]['message'] = 'Analyzing video...'
+            # Step 1: Video Analysis (10-30%)
+            processing_status[job_id]['message'] = 'Menganalisis video (scene detection)...'
             processing_status[job_id]['progress'] = 10
             
             video_analyzer = VideoAnalyzer(filepath, Config)
             video_analysis = video_analyzer.analyze()
             
-            # Step 2: Audio Analysis
-            processing_status[job_id]['message'] = 'Analyzing audio...'
-            processing_status[job_id]['progress'] = 40
+            # Check if monolog detected
+            is_monolog = video_analysis.get('is_monolog', False)
+            if is_monolog:
+                processing_status[job_id]['message'] = 'Monolog/podcast terdeteksi. Membuat segmen...'
+            
+            processing_status[job_id]['progress'] = 25
+            
+            # Step 2: Audio Analysis (25-60%)
+            processing_status[job_id]['message'] = 'Transkripsi audio dengan Whisper AI...'
+            processing_status[job_id]['progress'] = 30
             
             audio_analyzer = AudioAnalyzer(filepath, Config, overrides=overrides)
             audio_analysis = audio_analyzer.analyze(language)
             
-            # Step 3: Generate Clips
-            processing_status[job_id]['message'] = 'Generating clips...'
-            processing_status[job_id]['progress'] = 70
+            processing_status[job_id]['message'] = 'Menganalisis konten dan skor viral...'
+            processing_status[job_id]['progress'] = 55
+            
+            # Step 3: Generate Clips (55-75%)
+            processing_status[job_id]['message'] = 'Menentukan potongan klip terbaik...'
+            processing_status[job_id]['progress'] = 60
             
             clip_generator = ClipGenerator(filepath, Config)
             clips = clip_generator.generate_clips(
@@ -397,46 +407,66 @@ def process_video():
                 style,
                 hook_mode='timoty' if use_timoty_hooks else None
             )
+            
+            processing_status[job_id]['message'] = f'Ditemukan {len(clips)} klip potensial...'
+            processing_status[job_id]['progress'] = 70
+            
             if auto_caption:
+                processing_status[job_id]['message'] = 'Menambahkan caption...'
                 clip_generator.attach_captions(
                     clips,
                     audio_analysis['transcript'].get('segments', [])
                 )
             
-            # CRITICAL CHECK: Ensure we have clips
-            if not clips:
-                print("🚨 CRITICAL: No clips generated! This should never happen.")
-                print("   Attempting emergency clip creation...")
-                # Last resort: create clips from video duration
+            # CRITICAL CHECK: Ensure we have clips (especially for monolog)
+            min_clips = max(5, Config.FORCED_MIN_CLIP_OUTPUT)
+            if len(clips) < min_clips:
+                print(f"🚨 CRITICAL: Only {len(clips)} clips! Creating emergency clips for monolog...")
+                processing_status[job_id]['message'] = f'Membuat klip tambahan untuk monolog...'
+                
+                # Create emergency clips spaced throughout the video
                 video_duration = video_analysis.get('duration') or video_analysis.get('metadata', {}).get('duration', 60)
-                clips = [
-                    {
-                        'id': 1,
-                        'filename': 'clip_001.mp4',
-                        'title': 'Clip 1',
-                        'start_time': '0:00:00',
-                        'end_time': str(timedelta(seconds=min(20, video_duration))),
-                        'start_seconds': 0,
-                        'end_seconds': min(20, video_duration),
-                        'duration': min(20, video_duration),
-                        'viral_score': 'Rendah',
-                        'viral_score_numeric': 0.2,
-                        'reason': 'Emergency fallback',
-                        'category': 'educational',
-                        'transcript': 'Auto-generated clip'
-                    }
-                ]
+                
+                existing_count = len(clips)
+                needed = min_clips - existing_count
+                segment_length = min(25, video_duration / (needed + 1))  # Distribute evenly
+                
+                for i in range(needed):
+                    start = (i + 1) * (video_duration / (needed + 1))
+                    end = min(start + segment_length, video_duration)
+                    
+                    if end - start >= 8:  # At least 8 seconds
+                        clips.append({
+                            'id': existing_count + i + 1,
+                            'filename': f'clip_{existing_count + i + 1:03d}.mp4',
+                            'title': f'Clip {existing_count + i + 1}',
+                            'start_time': str(timedelta(seconds=int(start))),
+                            'end_time': str(timedelta(seconds=int(end))),
+                            'start_seconds': start,
+                            'end_seconds': end,
+                            'duration': end - start,
+                            'viral_score': 'Rendah',
+                            'viral_score_numeric': 0.25,
+                            'reason': 'Monolog fallback',
+                            'category': 'educational',
+                            'transcript': f'Segmen dari {start:.0f}s sampai {end:.0f}s'
+                        })
+                
+                print(f"   ✅ Created {len(clips)} total clips after emergency creation")
             
-            # Step 4: Export Clips
-            processing_status[job_id]['message'] = f'Exporting {len(clips)} clips...'
-            processing_status[job_id]['progress'] = 85
+            # Step 4: Export Clips (70-95%)
+            processing_status[job_id]['message'] = f'Mengekspor {len(clips)} klip... (parallel GPU export)'
+            processing_status[job_id]['progress'] = 75
             
             # Create output directory for this job
             output_dir = os.path.join(Config.OUTPUT_FOLDER, job_id)
             os.makedirs(output_dir, exist_ok=True)
             
-            # Export clips
+            # Export clips (now with parallel processing)
             exported_files = clip_generator.export_all_clips(clips, output_dir)
+            
+            processing_status[job_id]['message'] = f'Menyimpan metadata {len(exported_files)} klip...'
+            processing_status[job_id]['progress'] = 92
             
             # Convert clips to native types
             clips = convert_numpy_types(clips)

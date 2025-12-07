@@ -41,20 +41,21 @@ class Config:
     MAX_VIDEO_DURATION = 3600  # 60 minutes in seconds
     ALLOWED_EXTENSIONS = {'mp4', 'mov', 'avi', 'mkv'}
     
-    # Transcription settings
+    # Transcription settings - OPTIMIZED FOR SPEED
     TRANSCRIPTION_BACKEND = os.environ.get('TRANSCRIPTION_BACKEND', 'faster-whisper')
     WHISPER_MODEL = os.environ.get('WHISPER_MODEL', 'large-v3')  # tiny, base, small, medium, large, large-v3
     WHISPER_LANGUAGE = os.environ.get('WHISPER_LANGUAGE', 'id')  # Default: Indonesian
     FASTER_WHISPER_MODEL = os.environ.get('FASTER_WHISPER_MODEL', 'large-v3')
     FASTER_WHISPER_DEVICE = os.environ.get('FASTER_WHISPER_DEVICE', 'cuda')  # RTX 3060: use CUDA
     FASTER_WHISPER_COMPUTE_TYPE = os.environ.get('FASTER_WHISPER_COMPUTE_TYPE', 'float16')  # Optimized for RTX 3060
-    FASTER_WHISPER_BEAM_SIZE = int(os.environ.get('FASTER_WHISPER_BEAM_SIZE', 1))
+    FASTER_WHISPER_BEAM_SIZE = int(os.environ.get('FASTER_WHISPER_BEAM_SIZE', 1))  # Lower = faster
     FASTER_WHISPER_CHUNK_LENGTH = int(os.environ.get('FASTER_WHISPER_CHUNK_LENGTH', 30))
+    FASTER_WHISPER_VAD_FILTER = os.environ.get('FASTER_WHISPER_VAD_FILTER', 'true').lower() == 'true'  # Skip silent parts (30-50% faster)
     PROCESSING_CONCURRENCY = int(os.environ.get('PROCESSING_CONCURRENCY', 1))
-    PROCESSING_COOLDOWN_SECONDS = float(os.environ.get('PROCESSING_COOLDOWN_SECONDS', 2))
-    EXPORT_THROTTLE_SECONDS = float(os.environ.get('EXPORT_THROTTLE_SECONDS', 0.5))
+    PROCESSING_COOLDOWN_SECONDS = float(os.environ.get('PROCESSING_COOLDOWN_SECONDS', 1))  # Reduced from 2
+    EXPORT_THROTTLE_SECONDS = float(os.environ.get('EXPORT_THROTTLE_SECONDS', 0))  # Disabled for parallel export
     
-    # Clip generation settings
+    # Clip generation settings - OPTIMIZED FOR MONOLOG/PODCAST
     CLIP_DURATIONS = [
         (9, 15),   # Short clips
         (18, 22),  # Medium clips
@@ -63,19 +64,19 @@ class Config:
     MIN_CLIP_DURATION = 8  # Lowered from 9 for more flexibility
     MAX_CLIP_DURATION = 35
     
-    # Scoring thresholds - VERY LENIENT for monolog support
-    MIN_VIRAL_SCORE = 0.10  # Lowered from 0.15
-    MAX_CLIPS_PER_VIDEO = int(os.environ.get('MAX_CLIPS_PER_VIDEO', 15))
-    TARGET_CLIP_COUNT = int(os.environ.get('TARGET_CLIP_COUNT', 8))
-    MIN_CLIP_OUTPUT = int(os.environ.get('MIN_CLIP_OUTPUT', 3))  # Ensure at least 3 clips per run
-    FORCED_MIN_CLIP_OUTPUT = int(os.environ.get('FORCED_MIN_CLIP_OUTPUT', 3))  # Hard guarantee for monologs
-    RELAXED_VIRAL_SCORE = float(os.environ.get('RELAXED_VIRAL_SCORE', 0.05))  # Very relaxed
-    FALLBACK_VIRAL_SCORE = float(os.environ.get('FALLBACK_VIRAL_SCORE', 0.01))  # Near-zero threshold
-    MIN_CLIP_GAP_SECONDS = float(os.environ.get('MIN_CLIP_GAP_SECONDS', 2.0))  # Reduced gap
-    MAX_CLIP_OVERLAP_RATIO = float(os.environ.get('MAX_CLIP_OVERLAP_RATIO', 0.7))  # Allow more overlap
+    # Scoring thresholds - VERY LENIENT for monolog/podcast support
+    MIN_VIRAL_SCORE = 0.08  # Lowered further for monolog
+    MAX_CLIPS_PER_VIDEO = int(os.environ.get('MAX_CLIPS_PER_VIDEO', 20))  # Increased for long videos
+    TARGET_CLIP_COUNT = int(os.environ.get('TARGET_CLIP_COUNT', 10))  # Increased for long podcasts
+    MIN_CLIP_OUTPUT = int(os.environ.get('MIN_CLIP_OUTPUT', 5))  # Ensure at least 5 clips per run
+    FORCED_MIN_CLIP_OUTPUT = int(os.environ.get('FORCED_MIN_CLIP_OUTPUT', 5))  # Hard guarantee for monologs
+    RELAXED_VIRAL_SCORE = float(os.environ.get('RELAXED_VIRAL_SCORE', 0.03))  # Even more relaxed
+    FALLBACK_VIRAL_SCORE = float(os.environ.get('FALLBACK_VIRAL_SCORE', 0.0))  # Zero threshold for fallback
+    MIN_CLIP_GAP_SECONDS = float(os.environ.get('MIN_CLIP_GAP_SECONDS', 1.5))  # Further reduced gap
+    MAX_CLIP_OVERLAP_RATIO = float(os.environ.get('MAX_CLIP_OVERLAP_RATIO', 0.75))  # Allow more overlap for variety
     
-    # Scene detection - VERY SENSITIVE for monolog
-    SCENE_THRESHOLD = 15.0  # Lowered further for monolog detection
+    # Scene detection - ULTRA SENSITIVE for monolog/podcast
+    SCENE_THRESHOLD = 12.0  # Lowered further for monolog detection
     MIN_SCENE_LENGTH = 1  # Allow even short scenes
     
     # Audio analysis

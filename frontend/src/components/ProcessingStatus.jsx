@@ -98,9 +98,9 @@ function ProcessingStatus({ filename, jobId, settings, onComplete, onCancel }) {
 
   const progressSteps = [
     { key: 'video', label: 'Analisis Video', icon: '🎥', threshold: 10 },
-    { key: 'audio', label: 'Analisis Audio', icon: '🎧', threshold: 40 },
-    { key: 'clips', label: 'Generate Klip', icon: '✂️', threshold: 70 },
-    { key: 'export', label: 'Export & Finalisasi', icon: '📦', threshold: 95 }
+    { key: 'audio', label: 'Transkripsi Audio', icon: '🎧', threshold: 30 },
+    { key: 'clips', label: 'Generate Klip', icon: '✂️', threshold: 60 },
+    { key: 'export', label: 'Export & Finalisasi', icon: '📦', threshold: 75 }
   ]
 
   const getProgressColor = () => {

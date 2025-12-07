@@ -1403,26 +1403,88 @@ class ClipGenerator:
     
     def export_all_clips(self, clips: List[Dict], output_dir: str) -> List[str]:
         """
-        Export all clips
+        Export all clips - PARALLEL VERSION
+        Uses ThreadPoolExecutor for concurrent exports (GPU NVENC can handle multiple streams)
         """
         print(f"💾 Exporting {len(clips)} clips...")
         
+        # Check if parallel export is enabled
+        parallel_enabled = getattr(self.config, 'ENABLE_BATCH_EXPORT', True)
+        max_workers = getattr(self.config, 'MAX_PARALLEL_EXPORTS', 2)
+        
+        if parallel_enabled and len(clips) > 1 and max_workers > 1:
+            print(f"   ⚡ Parallel export enabled: {max_workers} concurrent exports")
+            return self._export_parallel(clips, output_dir, max_workers)
+        else:
+            print(f"   📝 Sequential export mode")
+            return self._export_sequential(clips, output_dir)
+    
+    def _export_parallel(self, clips: List[Dict], output_dir: str, max_workers: int) -> List[str]:
+        """Parallel export using ThreadPoolExecutor"""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
+        exported = []
+        failed = []
+        total = len(clips)
+        
+        def export_single(clip_data):
+            """Worker function for single clip export"""
+            idx, clip = clip_data
+            try:
+                output_path = self.export_clip(clip, output_dir)
+                if output_path:
+                    if clip.get('captions'):
+                        self._write_caption_file(clip, output_dir)
+                    return (idx, output_path, None)
+                return (idx, None, "Export returned None")
+            except Exception as e:
+                return (idx, None, str(e))
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all export jobs
+            futures = {
+                executor.submit(export_single, (idx, clip)): idx 
+                for idx, clip in enumerate(clips)
+            }
+            
+            # Process results as they complete
+            completed = 0
+            for future in as_completed(futures):
+                completed += 1
+                idx, output_path, error = future.result()
+                
+                if output_path:
+                    exported.append(output_path)
+                    print(f"   ✅ [{completed}/{total}] {clips[idx]['filename']} exported")
+                else:
+                    failed.append((idx, error))
+                    print(f"   ❌ [{completed}/{total}] {clips[idx]['filename']} failed: {error}")
+        
+        if failed:
+            print(f"   ⚠️ {len(failed)} clips failed to export")
+        
+        print(f"✅ Exported {len(exported)}/{total} clips successfully")
+        return exported
+    
+    def _export_sequential(self, clips: List[Dict], output_dir: str) -> List[str]:
+        """Sequential export (original method)"""
         exported = []
         delay = getattr(self.config, 'EXPORT_THROTTLE_SECONDS', 0)
+        total = len(clips)
         
         for idx, clip in enumerate(clips):
-            print(f"  Exporting clip {idx + 1}/{len(clips)}: {clip['filename']}")
+            print(f"  [{idx + 1}/{total}] Exporting: {clip['filename']}")
             output_path = self.export_clip(clip, output_dir)
             
             if output_path:
                 exported.append(output_path)
                 if clip.get('captions'):
                     self._write_caption_file(clip, output_dir)
+            
             if delay and delay > 0 and idx < len(clips) - 1:
                 time.sleep(delay)
         
         print(f"✅ Exported {len(exported)} clips successfully")
-        
         return exported
 
     def _build_caption_entries(self, clip: Dict, segments: List[Dict]) -> List[Dict]:

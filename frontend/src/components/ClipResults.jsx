@@ -35,8 +35,9 @@ function ClipResults({ clips, jobId, onReset }) {
   }, [jobId])
 
   const getViralBadge = (score) => {
-    if (score === 'Tinggi') return 'badge-success'
-    if (score === 'Sedang') return 'badge-warning'
+    if (!score) return 'badge-info'
+    if (score === 'Tinggi' || score === 'High') return 'badge-success'
+    if (score === 'Sedang' || score === 'Medium') return 'badge-warning'
     return 'badge-danger'
   }
 
@@ -45,7 +46,10 @@ function ClipResults({ clips, jobId, onReset }) {
       educational: '📚',
       entertaining: '😂',
       emotional: '❤️',
-      controversial: '🔥'
+      controversial: '🔥',
+      balanced: '⚖️',
+      funny: '😂',
+      dramatic: '🎭'
     }
     return emojis[category] || '🎬'
   }
@@ -200,7 +204,7 @@ function ClipResults({ clips, jobId, onReset }) {
 
               {/* Duration Badge */}
               <div className="absolute top-2 right-2 px-2 py-1 bg-black/70 rounded text-xs font-medium">
-                {Math.floor(clip.duration)}s
+                {Math.floor(clip.duration || 0)}s
               </div>
             </div>
 
@@ -208,19 +212,19 @@ function ClipResults({ clips, jobId, onReset }) {
             <div className="space-y-3">
               <div>
                 <h3 className="font-semibold mb-1 line-clamp-2">
-                  {clip.title}
+                  {clip.title || `Clip ${clip.id}`}
                 </h3>
                 <p className="text-xs text-white/60">
-                  {clip.start_time} - {clip.end_time}
+                  {clip.start_time || '0:00'} - {clip.end_time || '0:00'}
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className={getViralBadge(clip.viral_score)}>
-                  {clip.viral_score}
+                  {clip.viral_score || 'N/A'}
                 </span>
                 <span className="badge-info">
-                  {getCategoryEmoji(clip.category)} {clip.category}
+                  {getCategoryEmoji(clip.category)} {clip.category || 'general'}
                 </span>
                 {clip.caption_file && (
                   <span className="px-2 py-0.5 text-[10px] rounded border border-white/20 text-white/70">
@@ -230,7 +234,7 @@ function ClipResults({ clips, jobId, onReset }) {
               </div>
 
               <p className="text-xs text-white/70 line-clamp-2">
-                💡 {clip.reason}
+                💡 {clip.reason || 'Klip terpilih'}
               </p>
               {clip.timoty_hook && (
                 <p className="text-xs text-primary-200 line-clamp-2">

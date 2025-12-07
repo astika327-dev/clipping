@@ -13,7 +13,7 @@ function ClipsPage() {
   const fetchAllClips = async () => {
     try {
       setLoading(true)
-      const response = await fetch('http://localhost:5000/api/clips')
+      const response = await fetch('/api/clips')
       if (!response.ok) throw new Error('Gagal fetch clips')
       
       const data = await response.json()
@@ -29,7 +29,7 @@ function ClipsPage() {
   const downloadClip = async (jobId, clipFilename) => {
     try {
       const response = await fetch(
-        `http://localhost:5000/api/download/${jobId}/${clipFilename}`
+        `/api/download/${jobId}/${clipFilename}`
       )
       if (!response.ok) throw new Error('Download gagal')
 
@@ -73,7 +73,7 @@ function ClipsPage() {
 
     try {
       const response = await fetch(
-        `http://localhost:5000/api/delete/${jobId}/${clipFilename}`,
+        `/api/delete/${jobId}/${clipFilename}`,
         { method: 'DELETE' }
       )
       if (!response.ok) throw new Error('Delete gagal')
@@ -100,7 +100,7 @@ function ClipsPage() {
         const clip = clips.find(c => c.id === clipId)
         if (clip) {
           await fetch(
-            `http://localhost:5000/api/delete/${clip.jobId}/${clip.filename}`,
+            `/api/delete/${clip.jobId}/${clip.filename}`,
             { method: 'DELETE' }
           )
         }
