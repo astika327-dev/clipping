@@ -9,5 +9,11 @@
   },
   "files.associations": {
     "*.css": "tailwindcss"
-  }
+  },
+  "terminal.integrated.tabs.enabled": true,
+  "terminal.integrated.tabs.location": "top",
+  "terminal.integrated.commandsToSkipShell": [],
+  "terminal.integrated.allowMnemonics": false,
+  "terminal.explorerKind": "external",
+  "remote.SSH.defaultExtensions": []
 }
