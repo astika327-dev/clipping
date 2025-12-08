@@ -32,11 +32,12 @@ function SettingsPanel({ settings, onSettingsChange, onProcessStart, uploadedVid
           <label className="block text-sm font-medium mb-2">
             Durasi Target Klip
           </label>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             {[
               { value: 'short', label: '9-15 detik', emoji: '⚡' },
               { value: 'medium', label: '18-22 detik', emoji: '🎯' },
               { value: 'long', label: '28-32 detik', emoji: '📺' },
+              { value: 'extended', label: '40-50 detik', emoji: '🎞️' },
               { value: 'all', label: 'Semua', emoji: '🎬' }
             ].map((option) => (
               <button

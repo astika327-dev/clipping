@@ -263,6 +263,7 @@ function formatTargetDuration(target) {
     short: '9-15 detik',
     medium: '18-22 detik',
     long: '28-32 detik',
+    extended: '40-50 detik',
     all: 'Semua durasi'
   }
   return mapping[target] || target

@@ -217,7 +217,7 @@ class ClipGenerator:
         Args:
             video_analysis: Results from VideoAnalyzer
             audio_analysis: Results from AudioAnalyzer
-            target_duration: 'short' (9-15s), 'medium' (18-22s), 'long' (28-32s), or 'all'
+            target_duration: 'short' (9-15s), 'medium' (18-22s), 'long' (28-32s), 'extended' (40-50s), or 'all'
             style: 'funny', 'educational', 'dramatic', 'controversial', or 'balanced'
         """
         print("✂️ Generating clips...")
@@ -297,7 +297,7 @@ class ClipGenerator:
         print(f"🆘 Creating last resort segments for {video_duration:.1f}s video")
         
         segments = []
-        segment_lengths = [15, 20, 25]  # Various lengths
+        segment_lengths = [15, 20, 25, 45]  # Various lengths including extended for better context
         
         for length in segment_lengths:
             start = 0
@@ -701,8 +701,8 @@ class ClipGenerator:
             end = pause_points[i + 1]
             duration = end - start
             
-            # Only use segments between 10-35 seconds
-            if 10 <= duration <= 35:
+            # Only use segments between 10-50 seconds (expanded for extended duration)
+            if 10 <= duration <= 50:
                 overlapping_audio = [
                     seg for seg in audio_segments
                     if self._segments_overlap((start, end), (seg['start'], seg['end']))
@@ -743,6 +743,7 @@ class ClipGenerator:
             (12, 0.5),   # Short clips: 12s, 50% step
             (20, 0.6),   # Medium clips: 20s, 60% step  
             (28, 0.7),   # Long clips: 28s, 70% step
+            (45, 0.75),  # Extended clips: 45s, 75% step - for better context
         ]
         
         for segment_length, step_ratio in segment_configs:
@@ -1503,10 +1504,12 @@ class ClipGenerator:
             return 'short'
         elif 15 <= duration <= 28:
             return 'medium'
-        elif 25 <= duration <= 40:
+        elif 25 <= duration <= 42:
             return 'long'
-        elif duration > 40:
-            return 'long'  # Map long segments to 'long' instead of 'custom'
+        elif 38 <= duration <= 55:
+            return 'extended'  # Extended clips for better context (40-50s)
+        elif duration > 55:
+            return 'extended'  # Map very long segments to 'extended'
         elif duration >= 5:
             return 'short'  # Map short segments to 'short' instead of 'custom'
         else:
@@ -1644,7 +1647,8 @@ class ClipGenerator:
         target_ranges = {
             'short': (9, 15),
             'medium': (18, 22),
-            'long': (28, 32)
+            'long': (28, 32),
+            'extended': (40, 50)  # Extended duration for better context
         }
         
         if target == 'all':
@@ -2028,6 +2032,8 @@ class ClipGenerator:
                 if output_path:
                     if clip.get('captions'):
                         self._write_caption_file(clip, output_dir)
+                    # Write hook file for each clip (if timoty_hook exists)
+                    self._write_hook_file(clip, output_dir)
                     return (idx, output_path, None)
                 return (idx, None, "Export returned None")
             except Exception as e:
@@ -2073,6 +2079,8 @@ class ClipGenerator:
                 exported.append(output_path)
                 if clip.get('captions'):
                     self._write_caption_file(clip, output_dir)
+                # Write hook file for each clip (if timoty_hook exists)
+                self._write_hook_file(clip, output_dir)
             
             if delay and delay > 0 and idx < len(clips) - 1:
                 time.sleep(delay)
@@ -2119,6 +2127,62 @@ class ClipGenerator:
                 caption_file.write(f"{entry['index']}\n")
                 caption_file.write(f"{entry['start']} --> {entry['end']}\n")
                 caption_file.write(f"{entry['text']}\n\n")
+    
+    def _write_hook_file(self, clip: Dict, output_dir: str) -> None:
+        """
+        Write hook text to a .txt file for each clip.
+        The file is plain text, easily opened on Android devices.
+        """
+        hook_data = clip.get('timoty_hook')
+        if not hook_data:
+            return
+        
+        # Create filename: clip_001_hook.txt
+        base_name = clip['filename'].rsplit('.', 1)[0]
+        hook_filename = f"{base_name}_hook.txt"
+        hook_path = os.path.join(output_dir, hook_filename)
+        
+        with open(hook_path, 'w', encoding='utf-8') as f:
+            f.write("=" * 50 + "\n")
+            f.write(f"HOOK UNTUK: {clip['filename']}\n")
+            f.write("=" * 50 + "\n\n")
+            
+            # Main hook text
+            f.write("📢 HOOK TEXT:\n")
+            f.write("-" * 30 + "\n")
+            f.write(f"{hook_data.get('text', '')}\n\n")
+            
+            # Theme
+            theme = hook_data.get('theme', 'default')
+            f.write(f"🎯 TEMA: {theme.upper()}\n\n")
+            
+            # Power words
+            power_words = hook_data.get('power_words', [])
+            if power_words:
+                f.write("⚡ POWER WORDS:\n")
+                f.write(", ".join(power_words) + "\n\n")
+            
+            # Confidence
+            confidence = hook_data.get('confidence', 0)
+            f.write(f"📊 CONFIDENCE: {int(confidence * 100)}%\n\n")
+            
+            # Source fragment / context
+            source = hook_data.get('source_fragment', '')
+            if source:
+                f.write("📝 KONTEKS SUMBER:\n")
+                f.write("-" * 30 + "\n")
+                f.write(f"{source}\n\n")
+            
+            # Clip info
+            f.write("=" * 50 + "\n")
+            f.write("INFO CLIP:\n")
+            f.write(f"  Durasi: {clip['duration']:.1f} detik\n")
+            f.write(f"  Waktu: {clip['start_time']} - {clip['end_time']}\n")
+            f.write(f"  Viral Score: {clip.get('viral_score', 'N/A')}\n")
+            f.write(f"  Kategori: {clip.get('category', 'N/A')}\n")
+            f.write("=" * 50 + "\n")
+        
+        print(f"   📝 Hook file saved: {hook_filename}")
 
     def _build_text_flashes(self, clip: Dict) -> List[Dict]:
         """Determine punchy text overlay moments (FAKTOR 11)."""
