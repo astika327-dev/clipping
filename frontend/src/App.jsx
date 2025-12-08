@@ -17,6 +17,7 @@ function App() {
     language: 'id',
     targetDuration: 'all',
     style: 'balanced',
+    resolution: '1080p',
     useTimotyHook: true,
     autoCaption: false,
     transcriptionBackend: 'faster-whisper',

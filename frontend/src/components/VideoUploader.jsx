@@ -170,6 +170,7 @@ function VideoUploader({ onVideoUploaded }) {
             disabled={downloading || uploading}
           >
             <option value="1080p">1080p</option>
+            <option value="720p">720p</option>
             <option value="360p">360p</option>
           </select>
           <button

@@ -91,6 +91,38 @@ function SettingsPanel({ settings, onSettingsChange, onProcessStart, uploadedVid
           </p>
         </div>
 
+        {/* Resolution */}
+        <div>
+          <label className="block text-sm font-medium mb-2">
+            Resolusi Output
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { value: '720p', label: '720p', description: 'File lebih kecil', emoji: '📱' },
+              { value: '1080p', label: '1080p', description: 'Kualitas tinggi', emoji: '🖥️' }
+            ].map((option) => (
+              <button
+                key={option.value}
+                onClick={() => onSettingsChange({ ...settings, resolution: option.value })}
+                className={`
+                  p-3 rounded-lg border-2 transition-all
+                  ${settings.resolution === option.value
+                    ? 'border-green-500 bg-green-500/20'
+                    : 'border-white/20 hover:border-white/40'
+                  }
+                `}
+              >
+                <div className="text-2xl mb-1">{option.emoji}</div>
+                <div className="text-sm font-medium">{option.label}</div>
+                <div className="text-[10px] text-white/60">{option.description}</div>
+              </button>
+            ))}
+          </div>
+          <p className="text-white/50 text-xs mt-2">
+            720p: export lebih cepat & file kecil. 1080p: kualitas maksimal.
+          </p>
+        </div>
+
         {/* Hooks & Caption */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="glass rounded-xl p-4 border border-white/10">

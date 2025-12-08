@@ -224,6 +224,39 @@ class Config:
                 'mindset', 'kaya', 'wealth', 'wealthy', 'millionaire',
                 'milyarder', 'cashflow', 'passive income', 'asset', 'aset'
             ]
+        },
+        # KALIMASADA (Prof Kaka) Meta Topics
+        'crypto_trading': {
+            'label': 'Crypto Trading',
+            'keywords': [
+                'bitcoin', 'btc', 'ethereum', 'eth', 'crypto', 'kripto',
+                'trading', 'trader', 'entry', 'exit', 'stop loss', 'take profit',
+                'bullish', 'bearish', 'pump', 'dump', 'altcoin', 'defi'
+            ]
+        },
+        'technical_analysis': {
+            'label': 'Analisis Teknikal',
+            'keywords': [
+                'support', 'resistance', 'trend', 'chart', 'candle', 'candlestick',
+                'rsi', 'macd', 'moving average', 'fibonacci', 'breakout', 'reversal',
+                'volume', 'indikator', 'pattern', 'pola'
+            ]
+        },
+        'risk_management': {
+            'label': 'Risk Management',
+            'keywords': [
+                'risk', 'resiko', 'management', 'position size', 'lot',
+                'money management', 'modal', 'margin', 'leverage', 'portfolio',
+                'diversifikasi', 'alokasi', 'risk reward'
+            ]
+        },
+        'trading_psychology': {
+            'label': 'Psikologi Trading',
+            'keywords': [
+                'fomo', 'fear', 'greed', 'emosi', 'psikologi', 'sabar', 'patience',
+                'disiplin', 'mental', 'cut loss', 'take profit', 'hold',
+                'panic sell', 'rational', 'rasional'
+            ]
         }
     }
 
@@ -286,6 +319,15 @@ class Config:
     
     # Aspect ratio settings (16:9 for viral content)
     TARGET_ASPECT_RATIO = '16:9'
+    
+    # Resolution presets - user can select in frontend
+    RESOLUTION_PRESETS = {
+        '720p': {'width': 1280, 'height': 720, 'bitrate': '1M'},
+        '1080p': {'width': 1920, 'height': 1080, 'bitrate': '2M'}
+    }
+    DEFAULT_RESOLUTION = '1080p'
+    
+    # Default resolution (can be overridden per-job)
     TARGET_WIDTH = 1920
     TARGET_HEIGHT = 1080
     

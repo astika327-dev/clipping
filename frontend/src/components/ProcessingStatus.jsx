@@ -39,6 +39,7 @@ function ProcessingStatus({ filename, jobId, settings, onComplete, onCancel }) {
         language: settings.language,
         target_duration: settings.targetDuration,
         style: settings.style,
+        resolution: settings.resolution || '1080p',
         use_timoty_hooks: settings.useTimotyHook,
         auto_caption: settings.autoCaption
       })
@@ -169,6 +170,10 @@ function ProcessingStatus({ filename, jobId, settings, onComplete, onCancel }) {
               <div className="glass rounded-xl p-4 border border-white/10">
                 <p className="text-xs uppercase tracking-wide text-white/40">Gaya</p>
                 <p className="text-base font-semibold text-white mt-1 capitalize">{settings.style}</p>
+              </div>
+              <div className="glass rounded-xl p-4 border border-white/10 col-span-2">
+                <p className="text-xs uppercase tracking-wide text-white/40">Resolusi Output</p>
+                <p className="text-base font-semibold text-white mt-1">{settings.resolution || '1080p'}</p>
               </div>
             </div>
 

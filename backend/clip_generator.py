@@ -188,11 +188,24 @@ class TimotyHookGenerator:
 
 
 class ClipGenerator:
-    def __init__(self, video_path: str, config):
+    def __init__(self, video_path: str, config, resolution: str = None):
         self.video_path = video_path
         self.config = config
         self.clips = []
         self.hook_generator = TimotyHookGenerator()
+        
+        # Set resolution from preset or use default
+        self.resolution = resolution or getattr(config, 'DEFAULT_RESOLUTION', '1080p')
+        resolution_presets = getattr(config, 'RESOLUTION_PRESETS', {
+            '720p': {'width': 1280, 'height': 720, 'bitrate': '1M'},
+            '1080p': {'width': 1920, 'height': 1080, 'bitrate': '2M'}
+        })
+        
+        preset = resolution_presets.get(self.resolution, resolution_presets.get('1080p'))
+        self.target_width = preset['width']
+        self.target_height = preset['height']
+        self.target_bitrate = preset['bitrate']
+        print(f"📐 Resolution set to: {self.resolution} ({self.target_width}x{self.target_height}, {self.target_bitrate})")
         
     def generate_clips(self, video_analysis: Dict, audio_analysis: Dict,
                       target_duration: str = 'all', style: str = 'balanced',
@@ -245,6 +258,11 @@ class ClipGenerator:
         if len(selected) < forced_min:
             print(f"⚠️ Only {len(selected)} clips, need at least {forced_min}. Forcing creation...")
             selected = self._guarantee_minimum_clips(selected, scored_segments, video_analysis, audio_analysis, forced_min)
+        
+        # CONTEXT SNAPPING: Adjust clip boundaries to align with sentence/speech breaks
+        # This ensures clips don't cut mid-sentence for better contextual coherence
+        if audio_segments:
+            selected = self._snap_to_context_boundaries(selected, audio_segments)
         
         # Generate clip metadata
         clips = self._create_clip_metadata(selected, hook_mode=hook_mode)
@@ -490,6 +508,137 @@ class ClipGenerator:
         print(f"📊 Total merged segments: {len(merged)}")
         return merged
     
+    def _snap_to_context_boundaries(self, segments: List[Dict], audio_segments: List[Dict]) -> List[Dict]:
+        """
+        Intelligently adjust segment boundaries like a skilled editor with high IQ/EQ.
+        - Aligns cuts with natural sentence/speech breaks
+        - Ensures clips contain complete ideas
+        - Prevents cutting mid-thought for coherent context
+        """
+        if not audio_segments:
+            return segments
+        
+        # Build a list of natural break points with quality scores
+        # Each audio segment represents a transcribed phrase/sentence
+        break_point_data = []
+        for seg in audio_segments:
+            text = (seg.get('text') or '').strip()
+            
+            # Start points - prefer starts of sentences
+            start_quality = 0.5
+            if text and len(text) > 0:
+                first_word = text.split()[0].lower() if text.split() else ''
+                # Better quality for sentence starters
+                if first_word in ['jadi', 'nah', 'oke', 'terus', 'dan', 'tapi', 'kalau', 'so', 'but', 'and', 'then', 'if']:
+                    start_quality = 0.9
+                elif first_word[0].isupper() if first_word else False:
+                    start_quality = 0.8
+            break_point_data.append({'time': seg.get('start', 0), 'type': 'start', 'quality': start_quality})
+            
+            # End points - prefer ends of sentences
+            end_quality = 0.5
+            if text:
+                if text.rstrip()[-1:] in '.!?':
+                    end_quality = 1.0  # Perfect end point
+                elif text.rstrip()[-1:] == ',':
+                    end_quality = 0.6  # Acceptable pause
+            break_point_data.append({'time': seg.get('end', 0), 'type': 'end', 'quality': end_quality})
+        
+        # Sort by time and deduplicate
+        break_point_data.sort(key=lambda x: x['time'])
+        
+        # Create lookup for quick access
+        break_points_dict = {}
+        for bp in break_point_data:
+            t = round(bp['time'], 2)
+            if t not in break_points_dict or bp['quality'] > break_points_dict[t]['quality']:
+                break_points_dict[t] = bp
+        
+        break_times = sorted(break_points_dict.keys())
+        
+        if not break_times:
+            return segments
+        
+        adjusted_segments = []
+        for segment in segments:
+            original_start = segment['start']
+            original_end = segment['end']
+            original_duration = segment['duration']
+            
+            # Find best start point (prioritize quality, then proximity)
+            snap_margin = 2.5  # Maximum seconds to adjust
+            best_start = original_start
+            best_start_score = 0
+            
+            for bt in break_times:
+                diff = abs(bt - original_start)
+                if diff <= snap_margin:
+                    bp_data = break_points_dict.get(round(bt, 2), {})
+                    quality = bp_data.get('quality', 0.5)
+                    # Score = quality * proximity factor
+                    proximity_score = 1 - (diff / snap_margin)
+                    total_score = quality * 0.6 + proximity_score * 0.4
+                    
+                    # Prefer moving backward (earlier) for start
+                    if bt <= original_start + 0.3:
+                        total_score += 0.1
+                    
+                    if total_score > best_start_score:
+                        best_start_score = total_score
+                        best_start = bt
+            
+            # Find best end point (prioritize sentence-ending punctuation)
+            best_end = original_end
+            best_end_score = 0
+            
+            for bt in break_times:
+                diff = abs(bt - original_end)
+                if diff <= snap_margin:
+                    bp_data = break_points_dict.get(round(bt, 2), {})
+                    quality = bp_data.get('quality', 0.5)
+                    bp_type = bp_data.get('type', 'end')
+                    
+                    # Prefer actual end points over start points
+                    type_bonus = 0.2 if bp_type == 'end' else 0
+                    
+                    proximity_score = 1 - (diff / snap_margin)
+                    total_score = quality * 0.5 + proximity_score * 0.3 + type_bonus
+                    
+                    # Prefer moving forward (later) for end to complete thoughts
+                    if bt >= original_end - 0.3:
+                        total_score += 0.1
+                    
+                    if total_score > best_end_score:
+                        best_end_score = total_score
+                        best_end = bt
+            
+            # Validate new duration
+            new_duration = best_end - best_start
+            min_duration = max(8, original_duration * 0.7)
+            max_duration = original_duration * 1.35  # Slightly more flexibility
+            
+            if new_duration < min_duration or new_duration > max_duration:
+                # Keep original if adjustment would break duration constraints
+                adjusted_segments.append(segment)
+            else:
+                # Apply adjusted boundaries with quality metadata
+                adjusted_segment = segment.copy()
+                adjusted_segment['start'] = best_start
+                adjusted_segment['end'] = best_end
+                adjusted_segment['duration'] = new_duration
+                adjusted_segment['context_adjusted'] = True
+                adjusted_segment['boundary_quality'] = {
+                    'start_score': best_start_score,
+                    'end_score': best_end_score
+                }
+                adjusted_segments.append(adjusted_segment)
+        
+        adjusted_count = sum(1 for s in adjusted_segments if s.get('context_adjusted'))
+        if adjusted_count > 0:
+            print(f"🧠 Smart context-adjusted {adjusted_count}/{len(segments)} segment boundaries for coherent flow")
+        
+        return adjusted_segments
+
     def _segments_overlap(self, seg1: Tuple[float, float], seg2: Tuple[float, float]) -> bool:
         """Check if two time segments overlap"""
         return seg1[0] <= seg2[1] and seg2[0] <= seg1[1]
@@ -756,17 +905,456 @@ class ClipGenerator:
         
         return averaged
     
+    def _analyze_narrative_context(self, segment: Dict, all_segments: List[Dict]) -> Dict:
+        """
+        Analyze narrative structure optimized for:
+        1. TIMOTHY RONALD - Provocative, mental slap, direct hooks
+        2. KALIMASADA (Prof Kaka) - Analytical, educational, rational crypto trading
+        
+        Timothy Ronald patterns:
+        - Strong 3-second opening hooks
+        - Direct/provocative statements  
+        - Mental slap content
+        - Money/investment topics
+        - Emotional peaks
+        
+        Kalimasada patterns:
+        - Analytical/scientific explanations
+        - Crypto trading strategies
+        - Educational/tutorial style
+        - Psychology of trading
+        - Rational decision making
+        """
+        text = (segment.get('text') or '').lower().strip()
+        context_scores = {
+            'has_opening_hook': 0.0,
+            'has_conclusion': 0.0,
+            'has_complete_thought': 0.0,
+            'emotional_arc_position': 'neutral',
+            'narrative_strength': 0.0,
+            'is_timoty_signature': False,
+            'is_kalimasada_signature': False,
+            'content_type': 'general',
+            'creator_style': 'general'
+        }
+        
+        if not text:
+            return context_scores
+        
+        # ============================================
+        # TIMOTHY RONALD SIGNATURE OPENING HOOKS
+        # These are his most viral opening patterns
+        # ============================================
+        timoty_hooks = [
+            # Direct address style
+            'bro', 'guys', 'lu', 'lo', 'kalian', 'anak muda',
+            'dengerin', 'denger', 'listen', 'perhatiin', 'liat',
+            'gue kasih tau', 'gw kasih tau', 'gue mau jelasin',
+            # Provocative openings
+            'tau gak', 'tau nggak', 'lo tau', 'lu tau',
+            'kenapa', 'pernah gak', 'pernah nggak',
+            'jujur', 'brutal', 'sadis', 'keras banget',
+            # Attention grabbers
+            'ini penting', 'stop', 'tunggu', 'sebelum lanjut',
+            'yang ini', 'satu hal', 'fakta', 'rahasia',
+            # Knowledge drops
+            'gue bongkar', 'gw bongkar', 'ini cara', 'begini caranya',
+            'kebanyakan orang', 'masalahnya', 'problemnya',
+            # Money openers (Timothy specialty)
+            'kalau mau kaya', 'mau cuan', 'mau duit', 'soal uang',
+            'investasi', 'bisnis'
+        ]
+        
+        # ============================================
+        # KALIMASADA (PROF KAKA) SIGNATURE HOOKS
+        # Analytical, educational, crypto-focused
+        # ============================================
+        kalimasada_hooks = [
+            # Educational/tutorial openings
+            'jadi gini', 'nah ini', 'perhatikan', 'coba lihat',
+            'kita bahas', 'mari kita', 'sekarang kita',
+            'saya jelaskan', 'saya kasih tau', 'saya tunjukkan',
+            # Analytical openings
+            'secara teknikal', 'secara fundamental', 'dari data',
+            'kalau kita lihat', 'berdasarkan', 'menurut analisis',
+            'faktanya', 'data menunjukkan', 'historis',
+            # Crypto-specific hooks
+            'bitcoin', 'ethereum', 'btc', 'eth', 'crypto', 'kripto',
+            'market', 'chart', 'trend', 'bullish', 'bearish',
+            'altcoin', 'token', 'blockchain',
+            # Strategy openings
+            'strategi', 'strategy', 'cara trading', 'teknik',
+            'money management', 'risk management', 'position sizing',
+            # Academic/professor style
+            'yang perlu dipahami', 'konsepnya', 'prinsipnya',
+            'logikanya', 'secara rasional', 'ilmiahnya'
+        ]
+        
+        # Standard opening patterns
+        general_hooks = [
+            'jadi', 'nah', 'oke', 'so', 'ok so', 'alright',
+            'pertama', 'sebelum', 'first', 'before'
+        ]
+        
+        # Check for signatures (highest priority)
+        hook_detected = False
+        
+        # Check Timothy hooks
+        for pattern in timoty_hooks:
+            if text.startswith(pattern) or text[:40].find(pattern) != -1:
+                context_scores['has_opening_hook'] = 1.0
+                context_scores['is_timoty_signature'] = True
+                context_scores['creator_style'] = 'timoty'
+                hook_detected = True
+                break
+        
+        # Check Kalimasada hooks (can coexist for crypto content)
+        for pattern in kalimasada_hooks:
+            if text.startswith(pattern) or text[:50].find(pattern) != -1:
+                context_scores['has_opening_hook'] = max(context_scores['has_opening_hook'], 0.95)
+                context_scores['is_kalimasada_signature'] = True
+                if context_scores['creator_style'] == 'general':
+                    context_scores['creator_style'] = 'kalimasada'
+                elif context_scores['creator_style'] == 'timoty':
+                    context_scores['creator_style'] = 'both'  # Collaboration content
+                hook_detected = True
+                break
+        
+        # Fallback to general hooks
+        if not hook_detected:
+            for pattern in general_hooks:
+                if text.startswith(pattern) or text[:25].find(pattern) != -1:
+                    context_scores['has_opening_hook'] = 0.7
+                    break
+        
+        # ============================================
+        # CONCLUSION PATTERNS (Both creators)
+        # ============================================
+        timoty_conclusions = [
+            'catat', 'catet', 'ingat', 'inget', 'remember',
+            'praktekin', 'lakuin', 'apply', 'do it',
+            'mulai sekarang', 'dari sekarang', 'hari ini',
+            'jadi intinya', 'intinya', 'kesimpulan', 'poinnya',
+            'makanya', 'karena itu', 'itu sebabnya',
+            'yang penting', 'kuncinya', 'rahasianya',
+            'titik', 'selesai', 'udah', 'enough', 'cukup'
+        ]
+        
+        kalimasada_conclusions = [
+            # Academic conclusions
+            'kesimpulannya', 'jadi kesimpulan', 'summary',
+            'ringkasnya', 'singkatnya', 'intinya begini',
+            # Action-oriented (trading)
+            'jadi yang harus dilakukan', 'action plan',
+            'langkah selanjutnya', 'next step',
+            # Strategy conclusions
+            'dengan strategi ini', 'gunakan strategi',
+            'terapkan', 'implementasi',
+            # Risk warnings
+            'tapi ingat', 'disclaimer', 'resiko',
+            'jangan lupa', 'perhatikan resiko'
+        ]
+        
+        for pattern in timoty_conclusions + kalimasada_conclusions:
+            if pattern in text:
+                context_scores['has_conclusion'] = 0.85
+                break
+        
+        # ============================================
+        # MENTAL SLAP DETECTION (Timothy specialty)
+        # ============================================
+        mental_slap_patterns = [
+            'bangun', 'wake up', 'sadar', 'sadarlah', 'buka mata',
+            'jangan nangis', 'jangan manja', 'stop excuse',
+            'emang hidup gampang', 'emang enak', 'mau gampang',
+            'salah lu', 'salah lo', 'itu salah',
+            'bego', 'tolol', 'bodoh', 'stupid',
+            'kenyataan', 'realita', 'truth', 'faktanya',
+            'pahit', 'keras', 'kejam', 'brutal',
+            'kalau gak mau', 'kalo ga mau', 'ya udah',
+            'terserah', 'up to you', 'pilihan lu'
+        ]
+        
+        mental_slap_count = sum(1 for p in mental_slap_patterns if p in text)
+        if mental_slap_count >= 2:
+            context_scores['content_type'] = 'mental_slap'
+            context_scores['narrative_strength'] += 0.3
+            context_scores['is_timoty_signature'] = True
+        
+        # ============================================
+        # CRYPTO TRADING DETECTION (Kalimasada specialty)
+        # ============================================
+        crypto_trading_patterns = [
+            # Trading terminology
+            'trading', 'trader', 'trade', 'buy', 'sell', 'hold',
+            'entry', 'exit', 'stop loss', 'take profit', 'tp', 'sl',
+            'leverage', 'margin', 'spot', 'futures', 'perpetual',
+            # Analysis terms
+            'support', 'resistance', 'breakout', 'breakdown',
+            'trend', 'reversal', 'consolidation', 'sideways',
+            'bullish', 'bearish', 'pump', 'dump', 'correction',
+            # Indicators
+            'rsi', 'macd', 'moving average', 'ma', 'ema', 'sma',
+            'fibonacci', 'fib', 'volume', 'candle', 'candlestick',
+            # Risk/money management
+            'risk reward', 'rr', 'position size', 'lot',
+            'money management', 'mm', 'portfolio', 'alokasi',
+            # Crypto specifics
+            'halving', 'defi', 'dex', 'exchange', 'wallet',
+            'staking', 'yield', 'apy', 'apr', 'gas fee'
+        ]
+        
+        crypto_count = sum(1 for p in crypto_trading_patterns if p in text)
+        if crypto_count >= 3:
+            context_scores['content_type'] = 'crypto_trading'
+            context_scores['narrative_strength'] += 0.28
+            context_scores['is_kalimasada_signature'] = True
+        elif crypto_count >= 2:
+            if context_scores['content_type'] == 'general':
+                context_scores['content_type'] = 'crypto_trading'
+            context_scores['narrative_strength'] += 0.15
+        
+        # ============================================
+        # MONEY/INVESTMENT DETECTION (Both creators)
+        # ============================================
+        money_patterns = [
+            'uang', 'duit', 'cuan', 'profit', 'untung', 'rugi',
+            'investasi', 'invest', 'saham', 'crypto', 'bitcoin',
+            'kaya', 'rich', 'wealthy', 'millionaire', 'milyarder',
+            'passive income', 'cashflow', 'omset', 'revenue',
+            'gaji', 'salary', 'income', 'penghasilan',
+            'asset', 'aset', 'portofolio', 'portfolio',
+            'closing', 'deal', 'sales', 'jualan'
+        ]
+        
+        money_count = sum(1 for p in money_patterns if p in text)
+        if money_count >= 2 and context_scores['content_type'] == 'general':
+            context_scores['content_type'] = 'money_talk'
+            context_scores['narrative_strength'] += 0.25
+        
+        # ============================================  
+        # EDUCATIONAL/TUTORIAL DETECTION (Kalimasada emphasis)
+        # ============================================
+        educational_patterns = [
+            # Teaching language
+            'caranya', 'langkahnya', 'step by step', 'tutorial',
+            'belajar', 'pelajari', 'pahami', 'mengerti',
+            'contoh', 'misalnya', 'ilustrasi', 'case study',
+            # Explanation markers
+            'artinya', 'maksudnya', 'definisi', 'pengertian',
+            'kenapa bisa', 'alasannya', 'penyebab',
+            'cara kerja', 'mekanisme', 'prosesnya',
+            # Academic tone
+            'secara teori', 'prakteknya', 'aplikasinya',
+            'fundamental', 'prinsip dasar', 'konsep'
+        ]
+        
+        edu_count = sum(1 for p in educational_patterns if p in text)
+        if edu_count >= 2:
+            if context_scores['content_type'] == 'general':
+                context_scores['content_type'] = 'educational'
+            context_scores['narrative_strength'] += 0.2
+            if crypto_count >= 1:  # Educational + crypto = Kalimasada
+                context_scores['is_kalimasada_signature'] = True
+        
+        # ============================================
+        # MINDSET/MOTIVATION DETECTION
+        # ============================================
+        mindset_patterns = [
+            'mindset', 'mental', 'pikiran', 'cara pikir',
+            'sukses', 'success', 'berhasil', 'achieve',
+            'gagal', 'failure', 'jatuh', 'bangkit',
+            'disiplin', 'discipline', 'konsisten', 'consistent',
+            'fokus', 'focus', 'target', 'goal',
+            'kerja keras', 'hustle', 'grind', 'effort',
+            'psikologi', 'psychology', 'emosi', 'emotion',
+            'sabar', 'patience', 'fomo', 'fear', 'greed'
+        ]
+        
+        mindset_count = sum(1 for p in mindset_patterns if p in text)
+        if mindset_count >= 2:
+            if context_scores['content_type'] == 'general':
+                context_scores['content_type'] = 'mindset'
+            context_scores['narrative_strength'] += 0.2
+        
+        # ============================================
+        # COMPLETE THOUGHT ANALYSIS
+        # ============================================
+        sentences = [s.strip() for s in text.replace('!', '.').replace('?', '.').split('.') if s.strip()]
+        complete_sentences = sum(1 for s in sentences if len(s.split()) >= 5)
+        
+        if complete_sentences >= 3:
+            context_scores['has_complete_thought'] = 0.8
+        elif complete_sentences >= 2:
+            context_scores['has_complete_thought'] = 0.6
+        elif complete_sentences >= 1:
+            context_scores['has_complete_thought'] = 0.4
+        
+        # ============================================
+        # EMOTIONAL ARC DETECTION
+        # ============================================
+        exclamation_count = text.count('!')
+        question_count = text.count('?')
+        
+        # Intensity words
+        intensity_words = [
+            'banget', 'sekali', 'parah', 'gila', 'crazy',
+            'luar biasa', 'amazing', 'incredible', 'fantastis',
+            'penting banget', 'harus', 'wajib', 'must',
+            'serius', 'seriously', 'literally', 'beneran'
+        ]
+        intensity_count = sum(1 for w in intensity_words if w in text)
+        
+        # Determine emotional arc
+        if (intensity_count >= 3 or exclamation_count >= 3 or 
+            (mental_slap_count >= 2 and intensity_count >= 1)):
+            context_scores['emotional_arc_position'] = 'climax'
+            context_scores['narrative_strength'] = max(context_scores['narrative_strength'], 0.95)
+        elif context_scores['has_opening_hook'] > 0.7:
+            context_scores['emotional_arc_position'] = 'buildup'
+            context_scores['narrative_strength'] = max(context_scores['narrative_strength'], 0.75)
+        elif context_scores['has_conclusion'] > 0.7:
+            context_scores['emotional_arc_position'] = 'resolution'
+            context_scores['narrative_strength'] = max(context_scores['narrative_strength'], 0.8)
+        else:
+            context_scores['narrative_strength'] = max(context_scores['narrative_strength'], 0.4)
+        
+        # Bonus for questions (engagement)
+        if question_count > 0:
+            context_scores['narrative_strength'] += 0.1
+        
+        # Signature content boosts
+        if context_scores['is_timoty_signature']:
+            context_scores['narrative_strength'] = min(1.0, context_scores['narrative_strength'] + 0.15)
+        if context_scores['is_kalimasada_signature']:
+            context_scores['narrative_strength'] = min(1.0, context_scores['narrative_strength'] + 0.15)
+        
+        return context_scores
+    
+    def _detect_idea_boundaries(self, segment: Dict, audio_segments: List[Dict]) -> Dict:
+        """
+        Like a person with high EQ, detect where ideas start and end.
+        Ensures we don't cut in the middle of a thought.
+        """
+        text = (segment.get('text') or '').strip()
+        start = segment.get('start', 0)
+        end = segment.get('end', 0)
+        
+        boundary_quality = {
+            'start_quality': 0.5,  # 0 = mid-sentence, 1 = clean start
+            'end_quality': 0.5,    # 0 = mid-sentence, 1 = clean end
+            'idea_completeness': 0.5
+        }
+        
+        if not text or not audio_segments:
+            return boundary_quality
+        
+        # Find the actual transcript segments that overlap with this clip
+        overlapping = [
+            seg for seg in audio_segments
+            if seg.get('end', 0) > start and seg.get('start', 0) < end
+        ]
+        
+        if not overlapping:
+            return boundary_quality
+        
+        # Check if we start at the beginning of a transcript segment
+        first_overlap = min(overlapping, key=lambda x: x.get('start', 0))
+        if abs(first_overlap.get('start', 0) - start) < 0.5:
+            boundary_quality['start_quality'] = 1.0  # Clean start
+        elif abs(first_overlap.get('start', 0) - start) < 1.5:
+            boundary_quality['start_quality'] = 0.7
+        
+        # Check if we end at the end of a transcript segment
+        last_overlap = max(overlapping, key=lambda x: x.get('end', 0))
+        if abs(last_overlap.get('end', 0) - end) < 0.5:
+            boundary_quality['end_quality'] = 1.0  # Clean end
+        elif abs(last_overlap.get('end', 0) - end) < 1.5:
+            boundary_quality['end_quality'] = 0.7
+        
+        # Check for sentence-ending punctuation
+        if text.rstrip().endswith(('.', '!', '?')):
+            boundary_quality['end_quality'] += 0.2
+        
+        # Idea completeness: penalize very short text or incomplete sentences
+        word_count = len(text.split())
+        if word_count >= 30:
+            boundary_quality['idea_completeness'] = 1.0
+        elif word_count >= 15:
+            boundary_quality['idea_completeness'] = 0.7
+        else:
+            boundary_quality['idea_completeness'] = 0.4
+        
+        return boundary_quality
+    
     def _score_segments(self, segments: List[Dict], style: str) -> List[Dict]:
         """
-        Score each segment for clip potential
+        Score each segment for clip potential with HIGH IQ/EQ analysis.
+        Optimized for Timothy Ronald & Kalimasada content patterns.
         """
-        print(f"📊 Scoring segments (style: {style})...")
+        print(f"📊 Scoring segments with Timothy Ronald & Kalimasada optimization (style: {style})...")
         
         scored = []
         
         for segment in segments:
-            # Calculate viral score based on style
+            # Calculate base viral score
             viral_score = self._calculate_viral_score(segment, style)
+            
+            # HIGH IQ ANALYSIS: Narrative context
+            narrative_context = self._analyze_narrative_context(segment, segments)
+            
+            # Apply narrative bonuses (smart understanding of content flow)
+            if narrative_context['has_opening_hook'] > 0.7:
+                viral_score += 0.15  # Strong hooks are gold
+            elif narrative_context['has_opening_hook'] > 0.5:
+                viral_score += 0.10
+                
+            if narrative_context['has_conclusion'] > 0.7:
+                viral_score += 0.12  # Strong conclusions
+            elif narrative_context['has_conclusion'] > 0.5:
+                viral_score += 0.08
+                
+            if narrative_context['has_complete_thought'] > 0.6:
+                viral_score += 0.10  # Complete ideas are more shareable
+            elif narrative_context['has_complete_thought'] > 0.4:
+                viral_score += 0.05
+            
+            # CONTENT TYPE BONUSES (Both creators)
+            content_type = narrative_context.get('content_type', 'general')
+            
+            # Timothy Ronald specialties
+            if content_type == 'mental_slap':
+                viral_score += 0.18  # Mental slap is Timothy's specialty
+            elif content_type == 'money_talk':
+                viral_score += 0.15  # Money content is their core
+            elif content_type == 'mindset':
+                viral_score += 0.12  # Mindset content performs well
+            
+            # Kalimasada specialties
+            elif content_type == 'crypto_trading':
+                viral_score += 0.20  # Crypto trading is Kalimasada's specialty
+            elif content_type == 'educational':
+                viral_score += 0.15  # Educational content (Prof Kaka style)
+            
+            # CREATOR SIGNATURE BONUSES
+            if narrative_context.get('is_timoty_signature'):
+                viral_score += 0.15  # Timothy signature patterns
+            if narrative_context.get('is_kalimasada_signature'):
+                viral_score += 0.15  # Kalimasada signature patterns
+            
+            # Creator style identification (for metadata)
+            creator_style = narrative_context.get('creator_style', 'general')
+            
+            # Emotional arc position bonus
+            if narrative_context['emotional_arc_position'] == 'climax':
+                viral_score += 0.18  # Emotional peaks are highly engaging
+            elif narrative_context['emotional_arc_position'] == 'resolution':
+                viral_score += 0.10  # Good endings satisfy viewers
+            elif narrative_context['emotional_arc_position'] == 'buildup':
+                viral_score += 0.05  # Setup content
+            
+            # Narrative strength contributes to overall score
+            viral_score += narrative_context['narrative_strength'] * 0.12
             
             # Determine category
             category = self._determine_category(segment)
@@ -776,13 +1364,18 @@ class ClipGenerator:
             
             scored.append({
                 **segment,
-                'viral_score': viral_score,
+                'viral_score': min(1.0, max(0.0, viral_score)),
                 'category': category,
-                'suitable_duration': suitable_duration
+                'suitable_duration': suitable_duration,
+                'narrative_context': narrative_context,
+                'content_type': content_type,
+                'creator_style': creator_style
             })
         
         # Sort by viral score
         scored.sort(key=lambda x: x['viral_score'], reverse=True)
+        
+        print(f"   🧠 Applied IQ/EQ context analysis to {len(scored)} segments")
         
         return scored
     
@@ -1288,11 +1881,11 @@ class ClipGenerator:
         """
         output_path = os.path.join(output_dir, clip['filename'])
         
-        # Build video filters for 16:9 aspect ratio
+        # Build video filters for aspect ratio using instance resolution
         # Using CPU-based filters for better compatibility with GPU encoding
         video_filters = [
-            f"scale=w={self.config.TARGET_WIDTH}:h={self.config.TARGET_HEIGHT}:force_original_aspect_ratio=decrease",
-            f"pad={self.config.TARGET_WIDTH}:{self.config.TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black"
+            f"scale=w={self.target_width}:h={self.target_height}:force_original_aspect_ratio=decrease",
+            f"pad={self.target_width}:{self.target_height}:(ow-iw)/2:(oh-ih)/2:black"
         ]
         
         composite_filter = ','.join(video_filters)
@@ -1328,9 +1921,9 @@ class ClipGenerator:
                 '-c:v', self.config.VIDEO_CODEC,
                 '-preset', getattr(self.config, 'NVENC_PRESET', 'medium'),  # slow/medium/fast
                 '-rc', getattr(self.config, 'NVENC_RC_MODE', 'vbr'),  # Rate control mode
-                '-b:v', self.config.VIDEO_BITRATE,  # Target bitrate
-                '-maxrate', self.config.VIDEO_BITRATE,  # Max bitrate
-                '-bufsize', f"{int(int(self.config.VIDEO_BITRATE.rstrip('M')) * 2)}M",  # Buffer size = 2x bitrate
+                '-b:v', self.target_bitrate,  # Target bitrate based on resolution
+                '-maxrate', self.target_bitrate,  # Max bitrate
+                '-bufsize', f"{int(int(self.target_bitrate.rstrip('M')) * 2)}M",  # Buffer size = 2x bitrate
                 '-c:a', self.config.AUDIO_CODEC,
                 '-b:a', self.config.AUDIO_BITRATE,
                 '-y',  # Overwrite output file
@@ -1342,7 +1935,7 @@ class ClipGenerator:
                 '-c:v', 'libx264',
                 '-preset', 'fast',  # CPU preset
                 '-crf', '23',  # Quality (lower = better, 23 = good default)
-                '-b:v', self.config.VIDEO_BITRATE,
+                '-b:v', self.target_bitrate,
                 '-c:a', self.config.AUDIO_CODEC,
                 '-b:a', self.config.AUDIO_BITRATE,
                 '-y',
@@ -1354,7 +1947,7 @@ class ClipGenerator:
             gpu_enabled = getattr(self.config, 'USE_GPU_ACCELERATION', True)
             gpu_filters = getattr(self.config, 'USE_GPU_FILTERS', False)
             print(f"   🎬 GPU Acceleration: {gpu_enabled} | GPU Filters: {gpu_filters} | Codec: {self.config.VIDEO_CODEC}")
-            print(f"   🔧 Preset: {getattr(self.config, 'NVENC_PRESET', 'medium')} | Bitrate: {self.config.VIDEO_BITRATE}")
+            print(f"   🔧 Preset: {getattr(self.config, 'NVENC_PRESET', 'medium')} | Bitrate: {self.target_bitrate} | Resolution: {self.resolution}")
             
             result = subprocess.run(cmd, check=True, capture_output=True, text=True)
             print(f"   ✅ Clip exported successfully: {os.path.basename(output_path)}")
@@ -1374,8 +1967,8 @@ class ClipGenerator:
         output_path = os.path.join(output_dir, clip['filename'])
         
         video_filters = [
-            f"scale=w={self.config.TARGET_WIDTH}:h={self.config.TARGET_HEIGHT}:force_original_aspect_ratio=decrease",
-            f"pad={self.config.TARGET_WIDTH}:{self.config.TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black"
+            f"scale=w={self.target_width}:h={self.target_height}:force_original_aspect_ratio=decrease",
+            f"pad={self.target_width}:{self.target_height}:(ow-iw)/2:(oh-ih)/2:black"
         ]
         composite_filter = ','.join(video_filters)
         
@@ -1386,7 +1979,7 @@ class ClipGenerator:
             '-t', str(clip['duration']),
             '-vf', composite_filter,
             '-c:v', 'libx264',
-            '-b:v', self.config.VIDEO_BITRATE,
+            '-b:v', self.target_bitrate,
             '-c:a', self.config.AUDIO_CODEC,
             '-b:a', self.config.AUDIO_BITRATE,
             '-preset', 'medium',

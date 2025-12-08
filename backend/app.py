@@ -200,6 +200,7 @@ def download_youtube_video():
 
     quality_formats = {
         '360p': "bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[height<=360]",
+        '720p': "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]",
         '1080p': "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]",
     }
 
@@ -342,6 +343,11 @@ def process_video():
         style = data.get('style', 'balanced')
         use_timoty_hooks = bool(data.get('use_timoty_hooks', False))
         auto_caption = bool(data.get('auto_caption', False))
+        
+        # Resolution setting - new parameter
+        resolution = data.get('resolution', Config.DEFAULT_RESOLUTION)
+        if resolution not in Config.RESOLUTION_PRESETS:
+            resolution = Config.DEFAULT_RESOLUTION
 
         backend_choice = str(data.get('transcription_backend', '') or '').strip().lower()
         overrides = {}
@@ -413,7 +419,8 @@ def process_video():
             processing_status[job_id]['message'] = 'Menentukan potongan klip terbaik...'
             processing_status[job_id]['progress'] = 60
             
-            clip_generator = ClipGenerator(filepath, Config)
+            # Pass resolution setting to ClipGenerator
+            clip_generator = ClipGenerator(filepath, Config, resolution=resolution)
             clips = clip_generator.generate_clips(
                 video_analysis,
                 audio_analysis,
