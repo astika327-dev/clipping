@@ -306,8 +306,12 @@ def download_youtube_video():
         readable = str(error_message or e)
         lower_msg = readable.lower()
         hint = ''
-        if 'sign in to confirm' in lower_msg or 'cookies' in lower_msg:
-            hint = ' | Solusi: ekspor cookies YouTube dan set env YTDLP_COOKIES_FILE atau YTDLP_COOKIES_FROM_BROWSER.'
+        if 'sign in to confirm' in lower_msg or 'cookies' in lower_msg or 'login' in lower_msg or 'bot' in lower_msg:
+            hint = (' | ⚠️ YouTube memerlukan autentikasi. Solusi: '
+                    '(1) Install browser extension "Get cookies.txt LOCALLY", '
+                    'ekspor cookies YouTube ke file, lalu set env YTDLP_COOKIES_FILE=path/to/cookies.txt; '
+                    'ATAU (2) Set env YTDLP_COOKIES_FROM_BROWSER=chrome (browser harus ditutup dulu). '
+                    'Lihat dokumentasi di QUICKSTART.md untuk detail lengkap.')
         return jsonify({'error': f'Gagal mengunduh video: {readable}{hint}'}), 400
     except Exception as e:
         if final_path and os.path.exists(final_path):
@@ -461,23 +465,39 @@ def process_video():
                 )
             
             # CRITICAL CHECK: Ensure we have clips (especially for monolog)
-            min_clips = max(5, Config.FORCED_MIN_CLIP_OUTPUT)
+            # ADAPTIVE min_clips based on video duration for long podcasts
+            video_duration = video_analysis.get('duration') or video_analysis.get('metadata', {}).get('duration', 60)
+            
+            # Calculate adaptive minimum clips based on video duration
+            if video_duration >= getattr(Config, 'VERY_LONG_VIDEO_THRESHOLD', 7200):  # 2+ hours
+                min_clips = max(20, getattr(Config, 'VERY_LONG_VIDEO_MIN_CLIPS', 20))
+                emergency_segment_length = 45  # Longer segments for very long videos
+                print(f"📺 Very long video ({video_duration/3600:.1f}hr): minimum {min_clips} clips required")
+            elif video_duration >= getattr(Config, 'LONG_VIDEO_THRESHOLD', 3600):  # 1-2 hours
+                min_clips = max(10, getattr(Config, 'LONG_VIDEO_MIN_CLIPS', 10))
+                emergency_segment_length = 35  # Medium-long segments for long videos
+                print(f"📺 Long video ({video_duration/60:.1f}min): minimum {min_clips} clips required")
+            else:
+                min_clips = max(5, Config.FORCED_MIN_CLIP_OUTPUT)
+                emergency_segment_length = 25  # Standard segments
+            
             if len(clips) < min_clips:
                 print(f"🚨 CRITICAL: Only {len(clips)} clips! Creating emergency clips for monolog...")
                 processing_status[job_id]['message'] = f'Membuat klip tambahan untuk monolog...'
                 
                 # Create emergency clips spaced throughout the video
-                video_duration = video_analysis.get('duration') or video_analysis.get('metadata', {}).get('duration', 60)
-                
                 existing_count = len(clips)
                 needed = min_clips - existing_count
-                segment_length = min(25, video_duration / (needed + 1))  # Distribute evenly
+                segment_length = min(emergency_segment_length, video_duration / (needed + 1))  # Distribute evenly
+                
+                # Ensure segment is at least 15 seconds for context
+                segment_length = max(15, segment_length)
                 
                 for i in range(needed):
                     start = (i + 1) * (video_duration / (needed + 1))
                     end = min(start + segment_length, video_duration)
                     
-                    if end - start >= 8:  # At least 8 seconds
+                    if end - start >= 10:  # At least 10 seconds for better context
                         clips.append({
                             'id': existing_count + i + 1,
                             'filename': f'clip_{existing_count + i + 1:03d}.mp4',

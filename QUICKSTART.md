@@ -160,9 +160,43 @@ cd frontend
 npm install
 ```
 
+### YouTube memerlukan cookie/login
+
+YouTube kini memerlukan autentikasi untuk beberapa video. Ada 2 cara setup:
+
+**Cara 1: Export cookies ke file (Recommended)**
+
+1. Install browser extension "[Get cookies.txt LOCALLY](https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc)"
+2. Buka YouTube dan pastikan sudah login
+3. Klik extension dan pilih "Export" → simpan sebagai `youtube_cookies.txt`
+4. Set environment variable sebelum menjalankan backend:
+   ```bash
+   set YTDLP_COOKIES_FILE=C:\path\to\youtube_cookies.txt
+   python app.py
+   ```
+
+**Cara 2: Gunakan cookies dari browser langsung**
+
+1. Tutup browser (Chrome/Firefox/Edge) terlebih dahulu
+2. Set environment variable:
+   ```bash
+   set YTDLP_COOKIES_FROM_BROWSER=chrome
+   python app.py
+   ```
+   (Ganti `chrome` dengan `firefox`, `edge`, `opera`, atau `brave` sesuai browser yang dipakai)
+
+### Klip terlalu pendek untuk video panjang (>1 jam)
+
+Jika video podcast >1 jam menghasilkan klip terlalu pendek:
+
+1. Pastikan menggunakan versi terbaru aplikasi
+2. Sistem sekarang secara otomatis mendeteksi video panjang dan membuat segmen yang lebih panjang
+3. Video >1 jam akan menghasilkan minimal 10 klip
+4. Video >2 jam akan menghasilkan minimal 20 klip
+
 ### Processing terlalu lama
 
-- Gunakan video lebih pendek (< 15 menit)
+- Gunakan video lebih pendek (<15 menit)
 - Edit `backend/config.py`:
   ```python
   WHISPER_MODEL = 'tiny'  # Lebih cepat
@@ -181,7 +215,9 @@ npm install
 | 5 menit      | 2-3 menit    | 3-5 klip    |
 | 10 menit     | 4-6 menit    | 5-8 klip    |
 | 15 menit     | 6-10 menit   | 7-10 klip   |
-| 30 menit     | 12-20 menit  | 10 klip     |
+| 30 menit     | 12-20 menit  | 10-15 klip  |
+| 60 menit     | 25-40 menit  | 10-20 klip  |
+| 2+ jam       | 50-90 menit  | 20-30 klip  |
 
 ## 🎓 Belajar Lebih Lanjut
 

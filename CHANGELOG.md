@@ -2,6 +2,44 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2025-12-13
+
+### 🐛 Bug Fixes
+
+**Long Video (Podcast >1 Hour) Support:**
+
+- ✅ Fixed clip duration issue where clips were only 5-6 seconds for videos >1 hour
+- ✅ Added adaptive segment creation based on video duration:
+  - Videos >1 hour: creates 15-50 second segments (minimum 10 clips)
+  - Videos >2 hours: creates 20-55 second segments (minimum 20 clips)
+- ✅ Extended `MAX_VIDEO_DURATION` to 4 hours for long podcasts
+- ✅ Added new config options: `LONG_VIDEO_THRESHOLD`, `VERY_LONG_VIDEO_THRESHOLD`
+- ✅ Added minimum clip guarantees: `LONG_VIDEO_MIN_CLIPS`, `VERY_LONG_VIDEO_MIN_CLIPS`
+
+**YouTube Download Cookies:**
+
+- ✅ Improved error messages for YouTube authentication requirements
+- ✅ Added detailed documentation for cookie setup in `QUICKSTART.md`
+- ✅ Added config documentation for `YTDLP_COOKIES_FILE` and `YTDLP_COOKIES_FROM_BROWSER`
+- ✅ Extended error detection to handle 'login', 'bot' messages
+
+### ⚙️ Configuration Changes
+
+- `MAX_VIDEO_DURATION`: 3 hours → 4 hours
+- `MAX_CLIPS_PER_VIDEO`: 20 → 30
+- `TARGET_CLIP_COUNT`: 10 → 15
+- `CLIP_DURATIONS`: Added (40-55s) extended duration option
+- `MAX_CLIP_DURATION`: 35 → 55
+
+### 📖 Documentation Updates
+
+- Added YouTube cookie setup guide in `QUICKSTART.md`
+- Added long video troubleshooting section
+- Updated processing time estimates for 60+ minute videos
+- Added config documentation for YouTube integration
+
+---
+
 ## [1.0.0] - 2025-12-03
 
 ### 🎉 Initial Release

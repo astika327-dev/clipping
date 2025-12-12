@@ -49,3 +49,7 @@ Thumbs.db
 
 # Whisper models cache
 ~/.cache/whisper/
+
+# YouTube cookies (sensitive - do not commit)
+**/youtube_cookies.txt
+**/cookies.txt

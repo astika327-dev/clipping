@@ -244,6 +244,20 @@ class ClipGenerator:
         scored_segments = self._score_segments(segments, style)
         print(f"📊 Scored segments: {len(scored_segments)}")
         
+        # CRITICAL SAFETY: If scoring returned empty, create emergency segments NOW
+        if not scored_segments:
+            print("🚨 CRITICAL: Scoring returned 0 segments! Creating emergency segments...")
+            emergency_segs = self._create_last_resort_segments(video_analysis, audio_analysis)
+            scored_segments = self._score_segments(emergency_segs, style)
+            if not scored_segments:
+                # Absolute last resort: return unscored emergency segments
+                print("🆘 ABSOLUTE EMERGENCY: Using unscored emergency segments")
+                for seg in emergency_segs[:10]:  # Take first 10
+                    seg['viral_score'] = 0.4
+                    seg['category'] = 'educational'
+                    seg['suitable_duration'] = self._check_duration_suitability(seg['duration'])
+                scored_segments = emergency_segs[:10]
+        
         # Debug: Show top 5 scores
         if scored_segments:
             top_scores = [s['viral_score'] for s in scored_segments[:5]]
@@ -735,16 +749,40 @@ class ClipGenerator:
         """
         Create fixed time-based segments for monolog/podcast videos.
         Uses multiple segment lengths (short, medium, long) to maximize clip variety.
+        OPTIMIZED for very long videos (>1 hour): creates appropriate segment lengths.
         """
         fallback_segments = []
         
-        # Create segments at multiple lengths for variety
-        segment_configs = [
-            (12, 0.5),   # Short clips: 12s, 50% step
-            (20, 0.6),   # Medium clips: 20s, 60% step  
-            (28, 0.7),   # Long clips: 28s, 70% step
-            (45, 0.75),  # Extended clips: 45s, 75% step - for better context
-        ]
+        # Adaptive segment configs based on video duration
+        long_video_threshold = getattr(self.config, 'LONG_VIDEO_THRESHOLD', 3600)  # 1 hour
+        very_long_threshold = getattr(self.config, 'VERY_LONG_VIDEO_THRESHOLD', 7200)  # 2 hours
+        
+        if video_duration >= very_long_threshold:
+            # Very long podcast (2+ hours): focus on longer, context-rich segments
+            print(f"📺 Very long video detected ({video_duration/3600:.1f} hours) - using extended segment config")
+            segment_configs = [
+                (20, 0.5),   # Medium clips: 20s, 50% step
+                (30, 0.6),   # Long clips: 30s, 60% step  
+                (45, 0.65),  # Extended clips: 45s, 65% step - good for context
+                (55, 0.7),   # Very extended: 55s, 70% step - max length for complete ideas
+            ]
+        elif video_duration >= long_video_threshold:
+            # Long podcast (1-2 hours): balanced segment config
+            print(f"📺 Long video detected ({video_duration/60:.1f} min) - using long video segment config")
+            segment_configs = [
+                (15, 0.5),   # Short clips: 15s, 50% step
+                (25, 0.6),   # Medium clips: 25s, 60% step  
+                (35, 0.7),   # Long clips: 35s, 70% step
+                (50, 0.75),  # Extended clips: 50s, 75% step - for context
+            ]
+        else:
+            # Normal video (<1 hour): standard config
+            segment_configs = [
+                (12, 0.5),   # Short clips: 12s, 50% step
+                (20, 0.6),   # Medium clips: 20s, 60% step  
+                (28, 0.7),   # Long clips: 28s, 70% step
+                (45, 0.75),  # Extended clips: 45s, 75% step - for better context
+            ]
         
         for segment_length, step_ratio in segment_configs:
             start_time = 0
@@ -1498,22 +1536,20 @@ class ClipGenerator:
         return max(categories.items(), key=lambda x: x[1])[0]
     
     def _check_duration_suitability(self, duration: float) -> str:
-        """Check which duration category this segment fits - LENIENT VERSION"""
-        # Very lenient ranges to ensure segments aren't filtered out
-        if 5 <= duration <= 18:
+        """Check which duration category this segment fits while respecting config min."""
+        min_short = max(5.0, getattr(self.config, 'MIN_CLIP_DURATION', 8))
+
+        if duration < min_short:
+            return 'custom'
+        if duration <= 18:
             return 'short'
-        elif 15 <= duration <= 28:
+        if duration <= 28:
             return 'medium'
-        elif 25 <= duration <= 42:
+        if duration <= 42:
             return 'long'
-        elif 38 <= duration <= 55:
-            return 'extended'  # Extended clips for better context (40-50s)
-        elif duration > 55:
-            return 'extended'  # Map very long segments to 'extended'
-        elif duration >= 5:
-            return 'short'  # Map short segments to 'short' instead of 'custom'
-        else:
-            return 'custom'  # Only truly unusable segments
+        if duration <= 55:
+            return 'extended'
+        return 'extended'
     
     def _select_clips(self, scored_segments: List[Dict], target_duration: str) -> List[Dict]:
         """Select clip segments quickly while guaranteeing minimum output."""
@@ -1525,7 +1561,15 @@ class ClipGenerator:
         
         selected = []
 
-        fallback_segments = [s for s in scored_segments if s.get('is_fallback')]
+        min_duration = max(5.0, getattr(self.config, 'MIN_CLIP_DURATION', 8))
+
+        def duration_ok(segment: Dict) -> bool:
+            return segment.get('duration', 0) >= min_duration
+
+        fallback_segments = [
+            s for s in scored_segments
+            if s.get('is_fallback') and duration_ok(s)
+        ]
         print(f"   Fallback segments available: {len(fallback_segments)}")
 
         if target_duration != 'all':
@@ -1533,15 +1577,18 @@ class ClipGenerator:
         else:
             candidates = [s for s in scored_segments if s.get('suitable_duration') != 'custom']
         
+        candidates = [s for s in candidates if duration_ok(s)]
         print(f"   Duration-matched candidates: {len(candidates)}")
 
         if not candidates:
             candidates = self._adjust_segment_durations(scored_segments, target_duration)
+            candidates = [s for s in candidates if duration_ok(s)]
             print(f"   After duration adjustment: {len(candidates)}")
 
         # Still empty? fall back to any segments (including fallback ones)
         if not candidates and scored_segments:
             candidates = scored_segments[:]
+            candidates = [s for s in candidates if duration_ok(s)]
             print(f"   Using all scored segments: {len(candidates)}")
 
         # Give priority to fallback monolog segments when no standard candidates available
@@ -1549,6 +1596,8 @@ class ClipGenerator:
             # extend while preserving order and avoiding duplicates
             seen_ids = set(id(seg) for seg in candidates)
             for seg in fallback_segments:
+                if not duration_ok(seg):
+                    continue
                 if id(seg) not in seen_ids:
                     candidates.append(seg)
                     seen_ids.add(id(seg))
@@ -1574,6 +1623,8 @@ class ClipGenerator:
             for segment in candidates:
                 if len(selected) >= limit:
                     break
+                if not duration_ok(segment):
+                    continue
                 key = (round(segment['start'], 2), round(segment['end'], 2))
                 if key in seen_keys:
                     continue
@@ -1608,6 +1659,8 @@ class ClipGenerator:
             for segment in fallback_sorted:
                 if len(selected) >= min_required:
                     break
+                if not duration_ok(segment):
+                    continue
                 key = (round(segment['start'], 2), round(segment['end'], 2))
                 if key in seen_keys:
                     continue
@@ -1629,6 +1682,7 @@ class ClipGenerator:
                 candidates,
                 fallback_segments,
                 forced_min,
+                min_duration,
                 max_clips,
                 seen_keys,
             )
@@ -1715,6 +1769,7 @@ class ClipGenerator:
         candidates: List[Dict],
         fallback_segments: List[Dict],
         forced_min: int,
+        min_duration: float,
         max_clips: int,
         seen_keys: set,
     ) -> List[Dict]:
@@ -1724,13 +1779,16 @@ class ClipGenerator:
         
         # Add fallback segments first (they're designed for monologs)
         if fallback_segments:
-            pool.extend(fallback_segments)
+            pool.extend([
+                seg for seg in fallback_segments
+                if seg.get('duration', 0) >= min_duration
+            ])
         
         # Then add candidates that aren't in pool yet
         pool_keys = set((round(s['start'], 2), round(s['end'], 2)) for s in pool)
         for seg in candidates:
             key = (round(seg['start'], 2), round(seg['end'], 2))
-            if key not in pool_keys:
+            if key not in pool_keys and seg.get('duration', 0) >= min_duration:
                 pool.append(seg)
                 pool_keys.add(key)
         
@@ -1749,6 +1807,8 @@ class ClipGenerator:
                 break
             key = (round(segment['start'], 2), round(segment['end'], 2))
             if key in seen_keys:
+                continue
+            if segment.get('duration', 0) < min_duration:
                 continue
             
             # Relax distinct check for forced output - only check severe overlap

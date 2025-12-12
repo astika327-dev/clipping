@@ -49,9 +49,26 @@ class VideoAnalyzer:
             # Detect scenes with optimization
             scenes = self._detect_scenes_optimized(duration)
             
-            # For monolog/podcast: if very few scenes, create time-based pseudo-scenes
-            if len(scenes) < 3 and duration > 30:
-                print(f"   📺 Monolog detected (only {len(scenes)} scenes). Creating time-based segments...")
+            # IMPROVED MONOLOG DETECTION
+            # Calculate scene density (scenes per minute)
+            scenes_per_minute = len(scenes) / (duration / 60) if duration > 0 else 0
+            is_long_form = duration > 180  # > 3 minutes
+            
+            # Multiple conditions for monolog detection:
+            # 1. Very low scene density (< 0.5 scenes/min)
+            # 2. Long video with few scenes
+            # 3. Very long video with relatively few scenes
+            is_monolog = (
+                (scenes_per_minute < 0.5) or  # Less than 0.5 scenes per minute
+                (is_long_form and len(scenes) < 10) or  # >3min with <10 scenes
+                (duration > 600 and len(scenes) < 15) or  # >10min with <15 scenes
+                (duration > 1800 and len(scenes) < 25)  # >30min with <25 scenes
+            )
+            
+            # For monolog/podcast: create time-based pseudo-scenes for better clip variety
+            if is_monolog and duration > 30:
+                print(f"   📺 Monolog/podcast detected ({scenes_per_minute:.2f} scenes/min, {len(scenes)} scenes total)")
+                print(f"      Creating synthetic segments for better clip coverage...")
                 scenes = self._create_monolog_scenes(duration, existing_scenes=scenes)
             
             # Analyze scenes with sampling optimization
@@ -62,7 +79,8 @@ class VideoAnalyzer:
                 'scenes': scene_analysis,
                 'total_scenes': len(scene_analysis),
                 'duration': duration,
-                'is_monolog': len(scenes) < 5  # Flag for downstream processing
+                'is_monolog': is_monolog,  # Enhanced flag for downstream processing
+                'scenes_per_minute': scenes_per_minute  # Added for debugging
             }
         except Exception as e:
             print(f"⚠️ Video analysis error: {e}")

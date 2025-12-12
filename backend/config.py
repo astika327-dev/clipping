@@ -38,9 +38,18 @@ class Config:
     UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'uploads')
     OUTPUT_FOLDER = os.path.join(os.path.dirname(__file__), 'outputs')
     MAX_VIDEO_SIZE = 7 * 1024 * 1024 * 1024  # 7GB
-    MAX_VIDEO_DURATION = 3 * 3600  # 3 hours
+    MAX_VIDEO_DURATION = 4 * 3600  # 4 hours - increased for long podcasts
     ALLOWED_EXTENSIONS = {'mp4', 'mov', 'avi', 'mkv'}
-    YTDLP_COOKIES_FILE = os.path.expanduser(os.environ.get('YTDLP_COOKIES_FILE', '').strip())
+    
+    # YouTube download cookies configuration
+    # Option 1: Export cookies to file using browser extension "Get cookies.txt LOCALLY"
+    #           Then set: YTDLP_COOKIES_FILE=path/to/cookies.txt
+    # Option 2: Use browser cookies directly (requires browser to be closed)
+    #           Set: YTDLP_COOKIES_FROM_BROWSER=chrome (or firefox, edge, opera, brave)
+    # Default: uses youtube_cookies.txt in backend folder if exists
+    _default_cookie_file = os.path.join(os.path.dirname(__file__), 'youtube_cookies.txt')
+    _env_cookie_file = os.environ.get('YTDLP_COOKIES_FILE', '').strip()
+    YTDLP_COOKIES_FILE = os.path.expanduser(_env_cookie_file) if _env_cookie_file else (_default_cookie_file if os.path.exists(_default_cookie_file) else '')
     YTDLP_COOKIES_FROM_BROWSER = os.environ.get('YTDLP_COOKIES_FROM_BROWSER', '').strip()
     
     # Transcription settings - OPTIMIZED FOR SPEED
@@ -59,21 +68,28 @@ class Config:
     PROCESSING_COOLDOWN_SECONDS = float(os.environ.get('PROCESSING_COOLDOWN_SECONDS', 1))  # Reduced from 2
     EXPORT_THROTTLE_SECONDS = float(os.environ.get('EXPORT_THROTTLE_SECONDS', 0))  # Disabled for parallel export
     
+    # Long video thresholds for special handling of podcasts > 1 hour
+    LONG_VIDEO_THRESHOLD = int(os.environ.get('LONG_VIDEO_THRESHOLD', 3600))  # 1 hour
+    VERY_LONG_VIDEO_THRESHOLD = int(os.environ.get('VERY_LONG_VIDEO_THRESHOLD', 7200))  # 2 hours
+    
     # Clip generation settings - OPTIMIZED FOR MONOLOG/PODCAST
     CLIP_DURATIONS = [
         (9, 15),   # Short clips
         (18, 22),  # Medium clips
-        (28, 32),  # Long clips
+        (28, 35),  # Long clips - extended upper bound
+        (40, 55),  # Extended clips - for context-rich podcast content
     ]
     MIN_CLIP_DURATION = 8  # Lowered from 9 for more flexibility
-    MAX_CLIP_DURATION = 35
+    MAX_CLIP_DURATION = 55  # Increased from 35 for extended clips
     
     # Scoring thresholds - VERY LENIENT for monolog/podcast support
     MIN_VIRAL_SCORE = 0.08  # Lowered further for monolog
-    MAX_CLIPS_PER_VIDEO = int(os.environ.get('MAX_CLIPS_PER_VIDEO', 20))  # Increased for long videos
-    TARGET_CLIP_COUNT = int(os.environ.get('TARGET_CLIP_COUNT', 10))  # Increased for long podcasts
+    MAX_CLIPS_PER_VIDEO = int(os.environ.get('MAX_CLIPS_PER_VIDEO', 30))  # Increased for very long videos (>1hr)
+    TARGET_CLIP_COUNT = int(os.environ.get('TARGET_CLIP_COUNT', 15))  # Increased for long podcasts
     MIN_CLIP_OUTPUT = int(os.environ.get('MIN_CLIP_OUTPUT', 5))  # Ensure at least 5 clips per run
     FORCED_MIN_CLIP_OUTPUT = int(os.environ.get('FORCED_MIN_CLIP_OUTPUT', 5))  # Hard guarantee for monologs
+    LONG_VIDEO_MIN_CLIPS = int(os.environ.get('LONG_VIDEO_MIN_CLIPS', 10))  # Min clips for videos >1hr
+    VERY_LONG_VIDEO_MIN_CLIPS = int(os.environ.get('VERY_LONG_VIDEO_MIN_CLIPS', 20))  # Min clips for videos >2hr
     RELAXED_VIRAL_SCORE = float(os.environ.get('RELAXED_VIRAL_SCORE', 0.03))  # Even more relaxed
     FALLBACK_VIRAL_SCORE = float(os.environ.get('FALLBACK_VIRAL_SCORE', 0.0))  # Zero threshold for fallback
     MIN_CLIP_GAP_SECONDS = float(os.environ.get('MIN_CLIP_GAP_SECONDS', 1.5))  # Further reduced gap

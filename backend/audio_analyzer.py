@@ -150,13 +150,45 @@ class AudioAnalyzer:
         self._ensure_video_ready()
         self._load_openai_whisper_model()
 
-        result = self.model.transcribe(
-            self.video_path,
-            language=language,
-            task='transcribe',
-            verbose=False,
-            fp16=False
-        )
+        # Calculate adaptive timeout: 2x video duration + 5min buffer (minimum 10min)
+        duration = self._get_video_duration_fallback()
+        timeout_seconds = max(int(duration * 2) + 300, 600)  # Min 10 minutes
+        print(f"   ⏱  Transcription timeout set to: {timeout_seconds}s ({timeout_seconds/60:.1f} min)")
+
+        # Use threading for timeout control (works on Windows)
+        import threading
+        
+        result_container = {'result': None, 'error': None}
+        
+        def transcribe_worker():
+            try:
+                result_container['result'] = self.model.transcribe(
+                    self.video_path,
+                    language=language,
+                    task='transcribe',
+                    verbose=False,
+                    fp16=False
+                )
+            except Exception as e:
+                result_container['error'] = e
+        
+        # Start transcription in thread
+        thread = threading.Thread(target=transcribe_worker, daemon=True)
+        thread.start()
+        thread.join(timeout=timeout_seconds)
+        
+        if thread.is_alive():
+            # Timeout occurred
+            print(f"⚠️  Whisper timeout after {timeout_seconds}s! Attempting chunk-based processing...")
+            # Note: We can't kill the thread, but we can process in chunks instead
+            return self._transcribe_in_chunks_openai(language, chunk_duration=300)
+        
+        if result_container['error']:
+            raise result_container['error']
+        
+        result = result_container['result']
+        if not result:
+            raise RuntimeError("Transcription failed without error")
 
         segments = []
         for segment in result['segments']:
@@ -294,6 +326,101 @@ class AudioAnalyzer:
         
         print(f"   📝 Created {len(segments)} placeholder segments")
         return segments
+    
+    def _transcribe_in_chunks_openai(self, language: str, chunk_duration: int = 300) -> Dict:
+        """
+        Fallback method: transcribe video in smaller chunks when timeout occurs.
+        Splits video into chunks, processes separately, then merges results.
+        """
+        print(f"   🔄 Processing in {chunk_duration}s chunks...")
+        duration = self._get_video_duration_fallback()
+        
+        all_segments = []
+        segment_id = 0
+        full_text = []
+        
+        # Process video in chunks
+        import subprocess
+        import tempfile
+        import os
+        
+        num_chunks = int(duration / chunk_duration) + 1
+        print(f"   📊 Total chunks to process: {num_chunks}")
+        
+        for chunk_idx in range(num_chunks):
+            start_time = chunk_idx * chunk_duration
+            if start_time >= duration:
+                break
+            
+            chunk_end = min(start_time + chunk_duration, duration)
+            actual_duration = chunk_end - start_time
+            
+            if actual_duration < 5:  # Skip very short chunks
+                continue
+            
+            print(f"   🎬 Processing chunk {chunk_idx + 1}/{num_chunks} ({start_time:.0f}s - {chunk_end:.0f}s)...")
+            
+            try:
+                # Extract chunk using FFmpeg
+                with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_file:
+                    chunk_path = temp_file.name
+                
+                ffmpeg_cmd = [
+                    'ffmpeg', '-i', self.video_path,
+                    '-ss', str(start_time),
+                    '-t', str(actual_duration),
+                    '-c', 'copy',
+                    '-y', chunk_path
+                ]
+                subprocess.run(ffmpeg_cmd, capture_output=True, timeout=60)
+                
+                # Transcribe chunk
+                chunk_result = self.model.transcribe(
+                    chunk_path,
+                    language=language,
+                    task='transcribe',
+                    verbose=False,
+                    fp16=False
+                )
+                
+                # Add offset to segment times
+                for segment in chunk_result['segments']:
+                    all_segments.append({
+                        'id': segment_id,
+                        'start': segment['start'] + start_time,
+                        'end': segment['end'] + start_time,
+                        'text': segment['text'].strip(),
+                        'words': self._extract_words(segment['text'])
+                    })
+                    segment_id += 1
+                
+                full_text.append(chunk_result['text'])
+                
+                # Clean up temp file
+                try:
+                    os.unlink(chunk_path)
+                except:
+                    pass
+                    
+            except Exception as e:
+                print(f"   ⚠️  Chunk {chunk_idx + 1} failed: {e}")
+                # Create placeholder for failed chunk
+                all_segments.append({
+                    'id': segment_id,
+                    'start': start_time,
+                    'end': chunk_end,
+                    'text': f'Audio content {chunk_idx + 1}',
+                    'words': ['audio', 'content']
+                })
+                segment_id += 1
+        
+        print(f"   ✅ Chunk processing complete: {len(all_segments)} segments")
+        
+        return {
+            'language': language,
+            'text': ' '.join(full_text) if full_text else 'Transcription completed in chunks',
+            'segments': all_segments
+        }
     
     def _extract_words(self, text: str) -> List[str]:
         """Extract clean words from text"""
