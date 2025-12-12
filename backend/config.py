@@ -45,9 +45,11 @@ class Config:
     
     # Transcription settings - OPTIMIZED FOR SPEED
     TRANSCRIPTION_BACKEND = os.environ.get('TRANSCRIPTION_BACKEND', 'faster-whisper')
-    WHISPER_MODEL = os.environ.get('WHISPER_MODEL', 'base')  # tiny, base, small, medium, large, large-v3
+    WHISPER_MODEL = os.environ.get('WHISPER_MODEL', 'large')  # tiny, base, small, medium, large, large-v3
+    WHISPER_FALLBACK_MODEL = os.environ.get('WHISPER_FALLBACK_MODEL', 'base')
     WHISPER_LANGUAGE = os.environ.get('WHISPER_LANGUAGE', 'id')  # Default: Indonesian
-    FASTER_WHISPER_MODEL = os.environ.get('FASTER_WHISPER_MODEL', 'base')
+    FASTER_WHISPER_MODEL = os.environ.get('FASTER_WHISPER_MODEL', 'large')
+    FASTER_WHISPER_FALLBACK_MODEL = os.environ.get('FASTER_WHISPER_FALLBACK_MODEL', 'base')
     FASTER_WHISPER_DEVICE = os.environ.get('FASTER_WHISPER_DEVICE', 'cuda')  # RTX 3060: use CUDA
     FASTER_WHISPER_COMPUTE_TYPE = os.environ.get('FASTER_WHISPER_COMPUTE_TYPE', 'float16')  # Optimized for RTX 3060
     FASTER_WHISPER_BEAM_SIZE = int(os.environ.get('FASTER_WHISPER_BEAM_SIZE', 1))  # Lower = faster

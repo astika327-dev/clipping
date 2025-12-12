@@ -8,6 +8,11 @@ from typing import List, Dict, Tuple, Optional
 import numpy as np
 
 try:
+    import torch
+except ImportError:  # pragma: no cover - torch optional in some environments
+    torch = None
+
+try:
     import whisper
 except ImportError:  # pragma: no cover - whisper installed via requirements
     whisper = None
@@ -31,7 +36,13 @@ class AudioAnalyzer:
         self.backend = (self.backend or default_backend).lower()
 
         self.whisper_model_name = overrides.get('whisper_model', getattr(config, 'WHISPER_MODEL', 'tiny'))
+        self.whisper_fallback_model = overrides.get(
+            'whisper_fallback_model', getattr(config, 'WHISPER_FALLBACK_MODEL', 'base')
+        )
         self.faster_model_name = overrides.get('faster_whisper_model', getattr(config, 'FASTER_WHISPER_MODEL', 'tiny'))
+        self.faster_fallback_model = overrides.get(
+            'faster_whisper_fallback_model', getattr(config, 'FASTER_WHISPER_FALLBACK_MODEL', 'base')
+        )
         self.faster_device = overrides.get('faster_whisper_device', getattr(config, 'FASTER_WHISPER_DEVICE', 'cpu'))
         self.faster_compute_type = overrides.get('faster_whisper_compute_type', getattr(config, 'FASTER_WHISPER_COMPUTE_TYPE', 'int8_float16'))
         
@@ -61,8 +72,20 @@ class AudioAnalyzer:
             raise ImportError("openai-whisper is not installed")
         if self.model is None:
             print(f"📥 Loading Whisper model: {self.whisper_model_name}")
-            self.model = whisper.load_model(self.whisper_model_name)
-            print("✅ Model loaded")
+            try:
+                self.model = whisper.load_model(self.whisper_model_name)
+                print("✅ Model loaded")
+            except Exception as exc:
+                if self.whisper_model_name == self.whisper_fallback_model:
+                    print(f"❌ Failed to load Whisper model {self.whisper_model_name}: {exc}")
+                    raise
+                print(
+                    f"⚠️ Failed to load Whisper model '{self.whisper_model_name}' ({exc}). "
+                    f"Falling back to '{self.whisper_fallback_model}'."
+                )
+                self.whisper_model_name = self.whisper_fallback_model
+                self.model = whisper.load_model(self.whisper_model_name)
+                print("✅ Fallback Whisper model loaded")
 
     def _load_faster_whisper_model(self):
         """Load faster-whisper model for efficient CPU inference."""
@@ -73,12 +96,28 @@ class AudioAnalyzer:
                 f"⚡ Loading Faster-Whisper model: {self.faster_model_name}"
                 f" [{self.faster_device} / {self.faster_compute_type}]"
             )
-            self.faster_model = FasterWhisperModel(
-                self.faster_model_name,
-                device=self.faster_device,
-                compute_type=self.faster_compute_type
-            )
-            print("✅ Faster-Whisper model ready")
+            try:
+                self.faster_model = FasterWhisperModel(
+                    self.faster_model_name,
+                    device=self.faster_device,
+                    compute_type=self.faster_compute_type
+                )
+                print("✅ Faster-Whisper model ready")
+            except Exception as exc:
+                if self.faster_model_name == self.faster_fallback_model:
+                    print(f"❌ Failed to load Faster-Whisper model {self.faster_model_name}: {exc}")
+                    raise
+                print(
+                    f"⚠️ Failed to load Faster-Whisper model '{self.faster_model_name}' ({exc}). "
+                    f"Falling back to '{self.faster_fallback_model}'."
+                )
+                self.faster_model_name = self.faster_fallback_model
+                self.faster_model = FasterWhisperModel(
+                    self.faster_model_name,
+                    device=self.faster_device,
+                    compute_type=self.faster_compute_type
+                )
+                print("✅ Fallback Faster-Whisper model ready")
     
     def _transcribe(self, language: str) -> Dict:
         """Dispatch transcription to the configured backend."""
