@@ -228,6 +228,22 @@ def download_youtube_video():
         'retries': 2,
     }
 
+    cookie_source = None
+    configured_cookie_file = getattr(Config, 'YTDLP_COOKIES_FILE', '').strip()
+    if configured_cookie_file:
+        expanded_cookie_file = os.path.expanduser(configured_cookie_file)
+        if os.path.exists(expanded_cookie_file):
+            ydl_opts['cookiefile'] = expanded_cookie_file
+            cookie_source = expanded_cookie_file
+        else:
+            print(f"⚠️ YT-DLP cookie file not found: {expanded_cookie_file}")
+
+    if not cookie_source:
+        browser_profile = getattr(Config, 'YTDLP_COOKIES_FROM_BROWSER', '').strip()
+        if browser_profile:
+            ydl_opts['cookiesfrombrowser'] = browser_profile
+            cookie_source = f"browser:{browser_profile}"
+
     temp_path = None
     final_path = None
 
@@ -265,7 +281,8 @@ def download_youtube_video():
             duration = info.get('duration') or get_video_duration(final_path)
             if duration > Config.MAX_VIDEO_DURATION:
                 os.remove(final_path)
-                return jsonify({'error': 'Durasi video YouTube melebihi batas 60 menit'}), 400
+                max_minutes = int(Config.MAX_VIDEO_DURATION / 60)
+                return jsonify({'error': f'Durasi video YouTube melebihi batas {max_minutes} menit'}), 400
 
             return jsonify({
                 'success': True,
@@ -287,7 +304,11 @@ def download_youtube_video():
                 pass
         error_message = getattr(e, 'exc_info', [None, None, None])[1]
         readable = str(error_message or e)
-        return jsonify({'error': f'Gagal mengunduh video: {readable}'}), 400
+        lower_msg = readable.lower()
+        hint = ''
+        if 'sign in to confirm' in lower_msg or 'cookies' in lower_msg:
+            hint = ' | Solusi: ekspor cookies YouTube dan set env YTDLP_COOKIES_FILE atau YTDLP_COOKIES_FROM_BROWSER.'
+        return jsonify({'error': f'Gagal mengunduh video: {readable}{hint}'}), 400
     except Exception as e:
         if final_path and os.path.exists(final_path):
             try:

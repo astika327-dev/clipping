@@ -359,3 +359,5 @@ Frontend memiliki ResourceMonitor component yang menampilkan:
 
 Jika ada masalah, cek section Troubleshooting atau buka issue di repository.
 
+touch ~/.no_auto_tmux
+exit

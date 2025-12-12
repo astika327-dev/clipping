@@ -38,8 +38,10 @@ class Config:
     UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'uploads')
     OUTPUT_FOLDER = os.path.join(os.path.dirname(__file__), 'outputs')
     MAX_VIDEO_SIZE = 7 * 1024 * 1024 * 1024  # 7GB
-    MAX_VIDEO_DURATION = 3600  # 60 minutes in seconds
+    MAX_VIDEO_DURATION = 3 * 3600  # 3 hours
     ALLOWED_EXTENSIONS = {'mp4', 'mov', 'avi', 'mkv'}
+    YTDLP_COOKIES_FILE = os.path.expanduser(os.environ.get('YTDLP_COOKIES_FILE', '').strip())
+    YTDLP_COOKIES_FROM_BROWSER = os.environ.get('YTDLP_COOKIES_FROM_BROWSER', '').strip()
     
     # Transcription settings - OPTIMIZED FOR SPEED
     TRANSCRIPTION_BACKEND = os.environ.get('TRANSCRIPTION_BACKEND', 'faster-whisper')
