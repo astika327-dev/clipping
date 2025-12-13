@@ -64,6 +64,34 @@ class Config:
     FASTER_WHISPER_BEAM_SIZE = int(os.environ.get('FASTER_WHISPER_BEAM_SIZE', 1))  # Lower = faster
     FASTER_WHISPER_CHUNK_LENGTH = int(os.environ.get('FASTER_WHISPER_CHUNK_LENGTH', 30))
     FASTER_WHISPER_VAD_FILTER = os.environ.get('FASTER_WHISPER_VAD_FILTER', 'true').lower() == 'true'  # Skip silent parts (30-50% faster)
+    
+    # === HYBRID TRANSCRIPTION SYSTEM ===
+    # Enable hybrid transcription for improved accuracy
+    HYBRID_TRANSCRIPTION_ENABLED = os.environ.get('HYBRID_TRANSCRIPTION_ENABLED', 'true').lower() == 'true'
+    
+    # Confidence threshold for retry with larger model (0.0 - 1.0)
+    # Segments below this threshold will be re-transcribed
+    CONFIDENCE_RETRY_THRESHOLD = float(os.environ.get('CONFIDENCE_RETRY_THRESHOLD', 0.7))
+    
+    # Model to use for retry (larger = more accurate but slower)
+    RETRY_MODEL = os.environ.get('RETRY_MODEL', 'large-v3')
+    RETRY_BEAM_SIZE = int(os.environ.get('RETRY_BEAM_SIZE', 5))  # Higher beam = more accurate
+    
+    # Dual-model comparison for short videos (compare 2 transcriptions, pick best)
+    DUAL_MODEL_ENABLED = os.environ.get('DUAL_MODEL_ENABLED', 'true').lower() == 'true'
+    DUAL_MODEL_MAX_DURATION = int(os.environ.get('DUAL_MODEL_MAX_DURATION', 600))  # Max 10 minutes for dual-model
+    DUAL_MODEL_SECONDARY = os.environ.get('DUAL_MODEL_SECONDARY', 'large-v3-turbo')
+    
+    # Groq API fallback (free tier: 14,400 requests/day)
+    GROQ_API_ENABLED = os.environ.get('GROQ_API_ENABLED', 'true').lower() == 'true'
+    GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
+    GROQ_MODEL = os.environ.get('GROQ_MODEL', 'whisper-large-v3-turbo')  # Options: whisper-large-v3, whisper-large-v3-turbo
+    GROQ_FALLBACK_ON_LOW_CONFIDENCE = os.environ.get('GROQ_FALLBACK_ON_LOW_CONFIDENCE', 'true').lower() == 'true'
+    GROQ_CONFIDENCE_THRESHOLD = float(os.environ.get('GROQ_CONFIDENCE_THRESHOLD', 0.6))  # Use Groq if below this
+    
+    # Minimum segment confidence to consider "good enough"
+    MIN_SEGMENT_CONFIDENCE = float(os.environ.get('MIN_SEGMENT_CONFIDENCE', 0.5))
+    
     PROCESSING_CONCURRENCY = int(os.environ.get('PROCESSING_CONCURRENCY', 1))
     PROCESSING_COOLDOWN_SECONDS = float(os.environ.get('PROCESSING_COOLDOWN_SECONDS', 1))  # Reduced from 2
     EXPORT_THROTTLE_SECONDS = float(os.environ.get('EXPORT_THROTTLE_SECONDS', 0))  # Disabled for parallel export
@@ -98,6 +126,22 @@ class Config:
     # Scene detection - ULTRA SENSITIVE for monolog/podcast
     SCENE_THRESHOLD = 12.0  # Lowered further for monolog detection
     MIN_SCENE_LENGTH = 1  # Allow even short scenes
+    
+    # === DEEP LEARNING VIDEO ANALYSIS ===
+    # Enable advanced video analysis with MediaPipe + YOLO
+    ENABLE_DEEP_LEARNING_VIDEO = os.environ.get('ENABLE_DEEP_LEARNING_VIDEO', 'true').lower() == 'true'
+    
+    # MediaPipe Face Detection
+    MEDIAPIPE_FACE_CONFIDENCE = float(os.environ.get('MEDIAPIPE_FACE_CONFIDENCE', 0.5))
+    
+    # YOLOv8 Object Detection
+    # Model sizes: 'n' (nano/fastest), 's' (small), 'm' (medium), 'l' (large), 'x' (xlarge/best)
+    YOLO_MODEL_SIZE = os.environ.get('YOLO_MODEL_SIZE', 'n')
+    YOLO_CONFIDENCE = float(os.environ.get('YOLO_CONFIDENCE', 0.5))
+    
+    # Speaker Activity Detection
+    SPEAKER_TALKING_THRESHOLD = float(os.environ.get('SPEAKER_TALKING_THRESHOLD', 0.3))  # Mouth open ratio to consider "talking"
+    SPEAKER_ENGAGEMENT_THRESHOLD = float(os.environ.get('SPEAKER_ENGAGEMENT_THRESHOLD', 0.2))  # Expression threshold
     
     # Audio analysis
     SILENCE_THRESHOLD = -40  # dB

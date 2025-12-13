@@ -1,9 +1,15 @@
 """
 Audio Analyzer Module
 Handles audio transcription and content analysis using Whisper
+Enhanced with Hybrid Transcription System for improved accuracy
 """
 import re
+import os
+import json
+import tempfile
+import subprocess
 from typing import List, Dict, Tuple, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 
@@ -22,6 +28,11 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     FasterWhisperModel = None
 
+try:
+    import httpx
+except ImportError:  # pragma: no cover - optional for Groq API
+    httpx = None
+
 class AudioAnalyzer:
     def __init__(self, video_path: str, config, overrides: Optional[Dict[str, str]] = None):
         self.video_path = video_path
@@ -29,6 +40,7 @@ class AudioAnalyzer:
         self.model = None
         self.transcript = None
         self.faster_model = None
+        self.retry_model = None  # For confidence-based retry
         overrides = overrides or {}
 
         default_backend = getattr(config, 'TRANSCRIPTION_BACKEND', 'openai-whisper')
@@ -45,6 +57,25 @@ class AudioAnalyzer:
         )
         self.faster_device = overrides.get('faster_whisper_device', getattr(config, 'FASTER_WHISPER_DEVICE', 'cpu'))
         self.faster_compute_type = overrides.get('faster_whisper_compute_type', getattr(config, 'FASTER_WHISPER_COMPUTE_TYPE', 'int8_float16'))
+        
+        # === HYBRID TRANSCRIPTION SETTINGS ===
+        self.hybrid_enabled = getattr(config, 'HYBRID_TRANSCRIPTION_ENABLED', True)
+        self.confidence_threshold = getattr(config, 'CONFIDENCE_RETRY_THRESHOLD', 0.7)
+        self.retry_model_name = getattr(config, 'RETRY_MODEL', 'large-v3')
+        self.retry_beam_size = getattr(config, 'RETRY_BEAM_SIZE', 5)
+        
+        # Dual-model comparison settings
+        self.dual_model_enabled = getattr(config, 'DUAL_MODEL_ENABLED', True)
+        self.dual_model_max_duration = getattr(config, 'DUAL_MODEL_MAX_DURATION', 600)
+        self.dual_model_secondary = getattr(config, 'DUAL_MODEL_SECONDARY', 'large-v3-turbo')
+        
+        # Groq API settings
+        self.groq_enabled = getattr(config, 'GROQ_API_ENABLED', True)
+        self.groq_api_key = getattr(config, 'GROQ_API_KEY', '')
+        self.groq_model = getattr(config, 'GROQ_MODEL', 'whisper-large-v3-turbo')
+        self.groq_fallback_on_low_confidence = getattr(config, 'GROQ_FALLBACK_ON_LOW_CONFIDENCE', True)
+        self.groq_confidence_threshold = getattr(config, 'GROQ_CONFIDENCE_THRESHOLD', 0.6)
+        self.min_segment_confidence = getattr(config, 'MIN_SEGMENT_CONFIDENCE', 0.5)
         
     def analyze(self, language: str = 'id') -> Dict:
         """
@@ -214,6 +245,7 @@ class AudioAnalyzer:
         - VAD filter to skip silent parts (30-50% faster)
         - Optimized beam_size for speed
         - Guaranteed minimum segments for monolog
+        - Confidence tracking for hybrid transcription
         """
         print("⚡ Transcribing audio with Faster-Whisper (VAD optimized)...")
         self._ensure_video_ready()
@@ -253,29 +285,53 @@ class AudioAnalyzer:
             )
 
         segments = []
+        low_confidence_segments = []
         segment_count = 0
         last_progress_report = 0
+        total_confidence = 0.0
         
         for idx, segment in enumerate(segments_iter):
             text = segment.text.strip()
             if not text:  # Skip empty segments
                 continue
-                
-            segments.append({
+            
+            # Calculate confidence from avg_logprob (typical range: -1.0 to 0.0)
+            # Convert to 0-1 scale where higher is better
+            avg_logprob = getattr(segment, 'avg_logprob', -0.5)
+            no_speech_prob = getattr(segment, 'no_speech_prob', 0.0)
+            
+            # Confidence formula: higher logprob = higher confidence, penalize no_speech
+            confidence = min(1.0, max(0.0, (avg_logprob + 1.0) * (1.0 - no_speech_prob)))
+            total_confidence += confidence
+            
+            seg_data = {
                 'id': idx,
                 'start': segment.start,
                 'end': segment.end,
                 'text': text,
-                'words': self._extract_words(text)
-            })
+                'words': self._extract_words(text),
+                'confidence': confidence,
+                'avg_logprob': avg_logprob,
+                'no_speech_prob': no_speech_prob
+            }
+            segments.append(seg_data)
             segment_count += 1
+            
+            # Track low confidence segments for retry
+            if confidence < self.confidence_threshold:
+                low_confidence_segments.append(seg_data)
             
             # Progress reporting every 20 segments
             if segment_count - last_progress_report >= 20:
                 print(f"   📝 Processed {segment_count} segments...")
                 last_progress_report = segment_count
 
-        print(f"✅ Faster-Whisper produced {len(segments)} segments")
+        avg_confidence = total_confidence / len(segments) if segments else 0.0
+        print(f"✅ Faster-Whisper produced {len(segments)} segments (avg confidence: {avg_confidence:.2f})")
+        
+        # Track low confidence segments for hybrid processing
+        if low_confidence_segments:
+            print(f"   ⚠️ Found {len(low_confidence_segments)} low-confidence segments (< {self.confidence_threshold})")
         
         # GUARANTEE: If no segments, create placeholder for monolog
         if not segments:
@@ -283,13 +339,22 @@ class AudioAnalyzer:
             # Try to get video duration for proper segmentation
             duration = self._get_video_duration_fallback()
             segments = self._create_placeholder_segments(duration)
+            avg_confidence = 0.0
+            low_confidence_segments = segments.copy()
 
-        return {
+        result = {
             'language': getattr(info, 'language', language),
             'text': ' '.join(seg['text'] for seg in segments),
-            'segments': segments
+            'segments': segments,
+            'avg_confidence': avg_confidence,
+            'low_confidence_segments': low_confidence_segments
         }
-    
+        
+        # === HYBRID TRANSCRIPTION PROCESSING ===
+        if self.hybrid_enabled and low_confidence_segments:
+            result = self._process_hybrid_transcription(result, language)
+        
+        return result
     def _get_video_duration_fallback(self) -> float:
         """Get video duration using ffprobe"""
         import subprocess
@@ -326,6 +391,265 @@ class AudioAnalyzer:
         
         print(f"   📝 Created {len(segments)} placeholder segments")
         return segments
+    
+    # === HYBRID TRANSCRIPTION METHODS ===
+    
+    def _process_hybrid_transcription(self, result: Dict, language: str) -> Dict:
+        """
+        Orchestrate hybrid transcription processing:
+        1. Retry low-confidence segments with larger model
+        2. Use Groq API for stubborn segments
+        3. Merge improved segments back into result
+        """
+        low_confidence_segments = result.get('low_confidence_segments', [])
+        if not low_confidence_segments:
+            return result
+        
+        print(f"\n🔄 HYBRID TRANSCRIPTION: Processing {len(low_confidence_segments)} low-confidence segments...")
+        
+        improved_segments = {}
+        still_low_confidence = []
+        
+        # Step 1: Retry with larger model
+        print(f"   📈 Step 1: Retrying with larger model ({self.retry_model_name})...")
+        for seg in low_confidence_segments:
+            try:
+                improved = self._retry_with_larger_model(seg, language)
+                if improved and improved.get('confidence', 0) > seg.get('confidence', 0):
+                    improved_segments[seg['id']] = improved
+                    print(f"      ✅ Segment {seg['id']}: {seg.get('confidence', 0):.2f} → {improved.get('confidence', 0):.2f}")
+                else:
+                    still_low_confidence.append(seg)
+            except Exception as e:
+                print(f"      ❌ Segment {seg['id']} retry failed: {e}")
+                still_low_confidence.append(seg)
+        
+        # Step 2: Use Groq API for remaining low confidence segments
+        if still_low_confidence and self.groq_enabled and self.groq_api_key:
+            print(f"   🌐 Step 2: Using Groq API for {len(still_low_confidence)} remaining segments...")
+            for seg in still_low_confidence:
+                try:
+                    groq_result = self._transcribe_with_groq(seg, language)
+                    if groq_result and groq_result.get('text'):
+                        improved_segments[seg['id']] = groq_result
+                        print(f"      ✅ Segment {seg['id']}: Groq API success")
+                except Exception as e:
+                    print(f"      ⚠️ Segment {seg['id']} Groq failed: {e}")
+        elif still_low_confidence:
+            if not self.groq_api_key:
+                print(f"   ⚠️ Groq API key not set. Set GROQ_API_KEY env variable for better accuracy.")
+            print(f"   ℹ️  {len(still_low_confidence)} segments remain at low confidence")
+        
+        # Step 3: Merge improved segments back into result
+        if improved_segments:
+            print(f"   🔗 Merging {len(improved_segments)} improved segments...")
+            new_segments = []
+            for seg in result['segments']:
+                if seg['id'] in improved_segments:
+                    improved = improved_segments[seg['id']]
+                    # Preserve original timing, update text and confidence
+                    seg['text'] = improved.get('text', seg['text'])
+                    seg['words'] = self._extract_words(seg['text'])
+                    seg['confidence'] = improved.get('confidence', seg.get('confidence', 0))
+                    seg['improved_by'] = improved.get('source', 'retry')
+                new_segments.append(seg)
+            
+            result['segments'] = new_segments
+            result['text'] = ' '.join(seg['text'] for seg in new_segments)
+            
+            # Recalculate average confidence
+            total_conf = sum(seg.get('confidence', 0) for seg in new_segments)
+            result['avg_confidence'] = total_conf / len(new_segments) if new_segments else 0
+            result['hybrid_improvements'] = len(improved_segments)
+            
+            print(f"   ✅ Hybrid processing complete! New avg confidence: {result['avg_confidence']:.2f}")
+        
+        return result
+    
+    def _retry_with_larger_model(self, segment: Dict, language: str) -> Optional[Dict]:
+        """
+        Retry transcribing a specific segment with a larger, more accurate model.
+        Extracts just the audio for that segment and re-transcribes.
+        """
+        if FasterWhisperModel is None:
+            return None
+        
+        start_time = segment.get('start', 0)
+        end_time = segment.get('end', start_time + 5)
+        duration = end_time - start_time
+        
+        # Skip very short segments
+        if duration < 1.0:
+            return None
+        
+        # Extract audio segment
+        audio_path = self._extract_audio_segment(start_time, end_time)
+        if not audio_path:
+            return None
+        
+        try:
+            # Load retry model lazily
+            if self.retry_model is None:
+                print(f"      📥 Loading retry model: {self.retry_model_name}")
+                self.retry_model = FasterWhisperModel(
+                    self.retry_model_name,
+                    device=self.faster_device,
+                    compute_type=self.faster_compute_type
+                )
+            
+            # Transcribe with higher accuracy settings
+            segments_iter, info = self.retry_model.transcribe(
+                audio_path,
+                language=language,
+                beam_size=self.retry_beam_size,  # Higher beam for accuracy
+                word_timestamps=False,
+                vad_filter=False,  # Process all audio
+                temperature=0.0  # More deterministic
+            )
+            
+            # Collect all text from the segment
+            texts = []
+            total_logprob = 0
+            count = 0
+            
+            for seg in segments_iter:
+                text = seg.text.strip()
+                if text:
+                    texts.append(text)
+                    total_logprob += getattr(seg, 'avg_logprob', -0.5)
+                    count += 1
+            
+            if texts:
+                avg_logprob = total_logprob / count if count > 0 else -0.5
+                confidence = min(1.0, max(0.0, (avg_logprob + 1.0)))
+                
+                return {
+                    'text': ' '.join(texts),
+                    'confidence': confidence,
+                    'source': 'retry_model'
+                }
+        except Exception as e:
+            print(f"      ⚠️ Retry model error: {e}")
+        finally:
+            # Cleanup temp file
+            try:
+                if audio_path and os.path.exists(audio_path):
+                    os.unlink(audio_path)
+            except:
+                pass
+        
+        return None
+    
+    def _transcribe_with_groq(self, segment: Dict, language: str) -> Optional[Dict]:
+        """
+        Use Groq API to transcribe a specific segment.
+        Groq offers free tier with fast Whisper inference.
+        """
+        if httpx is None:
+            print("      ⚠️ httpx not installed. Install with: pip install httpx")
+            return None
+        
+        if not self.groq_api_key:
+            return None
+        
+        start_time = segment.get('start', 0)
+        end_time = segment.get('end', start_time + 5)
+        
+        # Extract audio segment as file
+        audio_path = self._extract_audio_segment(start_time, end_time, format='mp3')
+        if not audio_path:
+            return None
+        
+        try:
+            # Read audio file
+            with open(audio_path, 'rb') as f:
+                audio_data = f.read()
+            
+            # Call Groq API
+            url = "https://api.groq.com/openai/v1/audio/transcriptions"
+            headers = {
+                "Authorization": f"Bearer {self.groq_api_key}"
+            }
+            
+            files = {
+                'file': ('audio.mp3', audio_data, 'audio/mpeg'),
+                'model': (None, self.groq_model),
+                'language': (None, language),
+                'response_format': (None, 'verbose_json')
+            }
+            
+            with httpx.Client(timeout=60.0) as client:
+                response = client.post(url, headers=headers, files=files)
+                response.raise_for_status()
+                result = response.json()
+            
+            text = result.get('text', '').strip()
+            if text:
+                # Groq doesn't provide confidence, estimate from response
+                return {
+                    'text': text,
+                    'confidence': 0.85,  # Assume good confidence from Groq
+                    'source': 'groq_api'
+                }
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                print("      ❌ Groq API: Invalid API key")
+            elif e.response.status_code == 429:
+                print("      ⚠️ Groq API: Rate limit exceeded")
+            else:
+                print(f"      ❌ Groq API error: {e.response.status_code}")
+        except Exception as e:
+            print(f"      ❌ Groq API error: {e}")
+        finally:
+            # Cleanup temp file
+            try:
+                if audio_path and os.path.exists(audio_path):
+                    os.unlink(audio_path)
+            except:
+                pass
+        
+        return None
+    
+    def _extract_audio_segment(self, start: float, end: float, format: str = 'wav') -> Optional[str]:
+        """
+        Extract a specific audio segment from the video using FFmpeg.
+        Returns path to temporary audio file.
+        """
+        try:
+            duration = end - start
+            
+            # Create temp file
+            suffix = f'.{format}'
+            fd, temp_path = tempfile.mkstemp(suffix=suffix)
+            os.close(fd)
+            
+            # FFmpeg command to extract audio segment
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', self.video_path,
+                '-ss', str(start),
+                '-t', str(duration),
+                '-vn',  # No video
+                '-acodec', 'pcm_s16le' if format == 'wav' else 'libmp3lame',
+                '-ar', '16000',  # 16kHz for speech
+                '-ac', '1',  # Mono
+                temp_path
+            ]
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=30
+            )
+            
+            if result.returncode == 0 and os.path.exists(temp_path):
+                return temp_path
+            else:
+                print(f"      ⚠️ FFmpeg extraction failed: {result.stderr.decode()[:100]}")
+                return None
+        except Exception as e:
+            print(f"      ⚠️ Audio extraction error: {e}")
+            return None
     
     def _transcribe_in_chunks_openai(self, language: str, chunk_duration: int = 300) -> Dict:
         """

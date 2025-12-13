@@ -18,3 +18,11 @@ more-itertools
 tiktoken
 psutil>=6.0.0
 yt-dlp>=2024.4.9
+httpx>=0.27.0
+# Deep Learning Video Analysis
+# YOLOv8 works with Python 3.8-3.13
+ultralytics>=8.1.0
+# MediaPipe requires Python 3.8-3.12 (NOT 3.13+)
+# Install if using Python 3.12 or lower:
+# mediapipe>=0.10.9
+# fer>=22.5.1

@@ -9,11 +9,27 @@ Panduan lengkap untuk deploy AI Video Clipper di Vast.ai GPU server.
 
 ## 🔗 Step 1: Connect ke Server
 
+**SSH dengan Port Forwarding (Backend + Frontend):**
+
 ```bash
-ssh -p 50950 root@171.101.230.251 -L 8080:localhost:8080
+ssh -p 50950 root@171.101.230.251 -L 5000:localhost:5000 -L 5173:localhost:5173
 ```
 
-> **Note**: Port forwarding `-L 8080:localhost:8080` akan forward port 8080 dari server ke localhost kamu.
+**Atau backend saja:**
+
+```bash
+ssh -p 50950 root@171.101.230.251 -L 5000:localhost:5000
+```
+
+> **Port Forwarding:**
+>
+> - `-L 5000:localhost:5000` → Backend API (Flask)
+> - `-L 5173:localhost:5173` → Frontend (Vite)
+>
+> Setelah server running, akses dari browser lokal:
+>
+> - Backend: http://localhost:5000
+> - Frontend: http://localhost:5173
 
 ---
 
@@ -201,7 +217,7 @@ npm run dev -- --host 0.0.0.0
 ### Start Backend:
 
 ```bash
-source ~/clipping/venv/bin/activate && cd ~/clipping/backend && python app.py
+source /workspace/clipping/venv/bin/activate && cd /workspace/clipping/backend && python app.py
 ```
 
 ### Start Frontend:

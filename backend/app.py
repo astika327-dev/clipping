@@ -15,7 +15,11 @@ from datetime import datetime, timedelta, timezone
 import traceback
 
 from config import Config
-from video_analyzer import VideoAnalyzer
+# Use advanced video analyzer with deep learning if available
+try:
+    from advanced_video_analyzer import AdvancedVideoAnalyzer as VideoAnalyzer
+except ImportError:
+    from video_analyzer import VideoAnalyzer
 from audio_analyzer import AudioAnalyzer
 from clip_generator import ClipGenerator
 import psutil

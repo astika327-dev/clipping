@@ -528,35 +528,73 @@ class ClipGenerator:
         - Aligns cuts with natural sentence/speech breaks
         - Ensures clips contain complete ideas
         - Prevents cutting mid-thought for coherent context
+        - Detects conclusion/transition phrases for better endings
         """
         if not audio_segments:
             return segments
+        
+        # === ENHANCED BOUNDARY DETECTION ===
+        # Transition words that indicate a NEW topic starting (good start points)
+        transition_starters = {
+            # Indonesian
+            'jadi', 'nah', 'oke', 'terus', 'dan', 'tapi', 'kalau', 'pertama',
+            'kedua', 'ketiga', 'selanjutnya', 'kemudian', 'sekarang', 'gini',
+            'begini', 'intinya', 'poinnya', 'maksudnya', 'artinya', 'misalnya',
+            'contohnya', 'faktanya', 'sebenarnya', 'sebenernya', 'padahal',
+            'sedangkan', 'namun', 'akan', 'tetapi', 'bahkan', 'oleh',
+            # English
+            'so', 'but', 'and', 'then', 'if', 'now', 'first', 'second', 'third',
+            'next', 'finally', 'basically', 'actually', 'however', 'therefore',
+            'moreover', 'furthermore', 'meanwhile', 'although', 'because', 'since'
+        }
+        
+        # Conclusion phrases that indicate topic ENDING (good end points)
+        conclusion_indicators = [
+            # Indonesian conclusions
+            'jadi intinya', 'jadi kesimpulannya', 'intinya adalah', 'poinnya adalah',
+            'yang penting', 'yang paling penting', 'kuncinya adalah', 'rahasianya',
+            'itulah kenapa', 'itulah mengapa', 'makanya', 'mangkanya', 'oleh karena itu',
+            'karena itu', 'satu hal yang', 'hal yang paling', 'ingat ya', 'ingat baik-baik',
+            'catat ya', 'catet ya', 'simpan ini', 'ini kuncinya', 'ini rahasianya',
+            # English conclusions
+            'so basically', 'the point is', 'the key is', 'the secret is', 'that\'s why',
+            'remember this', 'keep in mind', 'bottom line', 'in conclusion', 'to summarize'
+        ]
         
         # Build a list of natural break points with quality scores
         # Each audio segment represents a transcribed phrase/sentence
         break_point_data = []
         for seg in audio_segments:
             text = (seg.get('text') or '').strip()
+            text_lower = text.lower()
             
             # Start points - prefer starts of sentences
             start_quality = 0.5
             if text and len(text) > 0:
                 first_word = text.split()[0].lower() if text.split() else ''
-                # Better quality for sentence starters
-                if first_word in ['jadi', 'nah', 'oke', 'terus', 'dan', 'tapi', 'kalau', 'so', 'but', 'and', 'then', 'if']:
+                first_two_words = ' '.join(text.split()[:2]).lower() if len(text.split()) >= 2 else ''
+                
+                # Better quality for transition starters
+                if first_word in transition_starters:
+                    start_quality = 0.95  # Excellent start point
+                elif first_two_words.startswith(tuple(transition_starters)):
                     start_quality = 0.9
-                elif first_word[0].isupper() if first_word else False:
+                elif first_word and first_word[0].isupper():
                     start_quality = 0.8
             break_point_data.append({'time': seg.get('start', 0), 'type': 'start', 'quality': start_quality})
             
-            # End points - prefer ends of sentences
+            # End points - prefer ends of sentences and conclusions
             end_quality = 0.5
             if text:
-                if text.rstrip()[-1:] in '.!?':
-                    end_quality = 1.0  # Perfect end point
+                # Check for conclusion phrases (highest priority)
+                has_conclusion = any(phrase in text_lower for phrase in conclusion_indicators)
+                if has_conclusion:
+                    end_quality = 1.0  # Perfect end point - conclusion detected
+                elif text.rstrip()[-1:] in '.!?':
+                    end_quality = 0.9  # Great end point - sentence complete
                 elif text.rstrip()[-1:] == ',':
                     end_quality = 0.6  # Acceptable pause
-            break_point_data.append({'time': seg.get('end', 0), 'type': 'end', 'quality': end_quality})
+            break_point_data.append({'time': seg.get('end', 0), 'type': 'end', 'quality': end_quality, 'has_conclusion': has_conclusion if text else False})
         
         # Sort by time and deduplicate
         break_point_data.sort(key=lambda x: x['time'])
@@ -1268,6 +1306,203 @@ class ClipGenerator:
         if context_scores['is_kalimasada_signature']:
             context_scores['narrative_strength'] = min(1.0, context_scores['narrative_strength'] + 0.15)
         
+        # ============================================
+        # HIGH IQ ANALYSIS: Rhetorical Devices
+        # These make content more memorable and shareable
+        # ============================================
+        
+        # 1. METAPHOR/ANALOGY Detection (makes complex ideas simple)
+        analogy_patterns = [
+            'seperti', 'kayak', 'ibarat', 'seolah', 'mirip',
+            'analoginya', 'contohnya kayak', 'bayangin', 'coba bayangin',
+            'like', 'as if', 'imagine', 'think of it as', 'it\'s like'
+        ]
+        has_analogy = any(p in text for p in analogy_patterns)
+        if has_analogy:
+            context_scores['narrative_strength'] += 0.08
+            context_scores['has_rhetorical_device'] = True
+        
+        # 2. CONTRAST/COMPARISON (before/after, us/them)
+        contrast_patterns = [
+            'sebelum vs', 'dulu vs', 'before vs', 'vs', 
+            'bedanya', 'perbedaannya', 'beda sama', 'kebalikannya',
+            'sementara', 'sedangkan', 'padahal', 'tapi kenyataannya',
+            'orang sukses', 'orang gagal', 'yang kaya', 'yang miskin',
+            'winner', 'loser', 'mindset kaya', 'mindset miskin',
+            'sebelum', 'sesudah', 'before', 'after', 'dulu', 'sekarang'
+        ]
+        contrast_count = sum(1 for p in contrast_patterns if p in text)
+        if contrast_count >= 2:
+            context_scores['narrative_strength'] += 0.12
+            context_scores['has_contrast'] = True
+        elif contrast_count >= 1:
+            context_scores['narrative_strength'] += 0.06
+        
+        # 3. REPETITION (for emphasis - viral technique)
+        words = text.split()
+        word_freq = {}
+        for w in words:
+            w = w.lower().strip('.,!?')
+            if len(w) > 3:  # Only meaningful words
+                word_freq[w] = word_freq.get(w, 0) + 1
+        
+        repeated_words = [w for w, count in word_freq.items() if count >= 3]
+        if repeated_words:
+            context_scores['narrative_strength'] += 0.05
+            context_scores['has_repetition'] = True
+        
+        # 4. POWER NUMBERS (specific numbers are more credible)
+        number_patterns = [
+            r'\d+%', r'\d+ persen', r'\d+x', r'\d+ kali',
+            r'\d+ juta', r'\d+ milyar', r'\d+ tahun', r'\d+ bulan',
+            r'\d+ hari', r'\d+ jam', r'\d+ langkah', r'\d+ cara',
+            r'pertama', r'kedua', r'ketiga', r'step \d', r'langkah \d'
+        ]
+        import re as regex_module
+        number_count = sum(1 for pattern in number_patterns 
+                         if regex_module.search(pattern, text))
+        if number_count >= 2:
+            context_scores['narrative_strength'] += 0.1
+            context_scores['has_power_numbers'] = True
+        elif number_count >= 1:
+            context_scores['narrative_strength'] += 0.05
+        
+        # ============================================
+        # HIGH EQ ANALYSIS: Emotional Intelligence
+        # Understanding and triggering audience emotions
+        # ============================================
+        
+        # 1. PAIN POINT TARGETING (EQ - understanding audience struggles)
+        pain_patterns = [
+            # Financial pain
+            'gak punya uang', 'bokek', 'kantong kering', 'dompet tipis',
+            'gaji abis', 'gak cukup', 'pas-pasan', 'debt', 'utang',
+            # Career pain
+            'stuck', 'mentok', 'gak naik', 'jalan di tempat', 'bingung',
+            'gak tau mau', 'lost', 'gak ada arah', 'no direction',
+            # Relationship pain  
+            'ditolak', 'di-ghosting', 'gak dihargai', 'diabaikan',
+            # Self-esteem pain
+            'gak pede', 'minder', 'insecure', 'takut', 'ragu',
+            'overthinking', 'gak berani', 'malu'
+        ]
+        pain_count = sum(1 for p in pain_patterns if p in text)
+        if pain_count >= 2:
+            context_scores['narrative_strength'] += 0.15
+            context_scores['targets_pain_point'] = True
+            context_scores['eq_score'] = context_scores.get('eq_score', 0) + 0.3
+        elif pain_count >= 1:
+            context_scores['narrative_strength'] += 0.08
+            context_scores['eq_score'] = context_scores.get('eq_score', 0) + 0.15
+        
+        # 2. ASPIRATION TRIGGERING (what audience wants to become)
+        aspiration_patterns = [
+            'jadi kaya', 'bebas finansial', 'financial freedom', 'passive income',
+            'sukses', 'berhasil', 'achieve', 'accomplish', 'goal',
+            'impian', 'dream', 'mimpi jadi kenyataan', 'make it happen',
+            'level up', 'naik level', 'upgrade', 'transformasi',
+            'jadi boss', 'jadi bos', 'own business', 'punya bisnis',
+            'percaya diri', 'confident', 'respected', 'dihormati'
+        ]
+        aspiration_count = sum(1 for p in aspiration_patterns if p in text)
+        if aspiration_count >= 2:
+            context_scores['narrative_strength'] += 0.12
+            context_scores['triggers_aspiration'] = True
+            context_scores['eq_score'] = context_scores.get('eq_score', 0) + 0.25
+        elif aspiration_count >= 1:
+            context_scores['narrative_strength'] += 0.06
+            context_scores['eq_score'] = context_scores.get('eq_score', 0) + 0.12
+        
+        # 3. SOCIAL PROOF (builds trust through others' experiences)
+        social_proof_patterns = [
+            'banyak orang', 'kebanyakan', 'orang-orang sukses', 'mereka yang',
+            'client gue', 'murid gue', 'banyak yang', 'rata-rata',
+            'research', 'studi', 'menurut', 'data menunjukkan',
+            'terbukti', 'proven', 'sudah banyak', 'millions of'
+        ]
+        social_proof_count = sum(1 for p in social_proof_patterns if p in text)
+        if social_proof_count >= 2:
+            context_scores['narrative_strength'] += 0.1
+            context_scores['has_social_proof'] = True
+        
+        # 4. URGENCY/SCARCITY (FOMO triggering)
+        urgency_patterns = [
+            'sekarang', 'now', 'segera', 'immediately', 'hari ini',
+            'jangan tunggu', 'don\'t wait', 'kesempatan', 'opportunity',
+            'terbatas', 'limited', 'akan hilang', 'nanti terlambat',
+            'mumpung', 'selagi', 'while you can', 'before it\'s too late',
+            'kalau gak sekarang, kapan', 'nunda terus', 'procrastinate'
+        ]
+        urgency_count = sum(1 for p in urgency_patterns if p in text)
+        if urgency_count >= 2:
+            context_scores['narrative_strength'] += 0.12
+            context_scores['creates_urgency'] = True
+            context_scores['eq_score'] = context_scores.get('eq_score', 0) + 0.2
+        
+        # ============================================
+        # STORYTELLING ARC ANALYSIS 
+        # Great content follows story structures
+        # ============================================
+        
+        # Check for storytelling elements
+        story_elements = {
+            'has_setup': any(p in text for p in ['waktu itu', 'dulu gue', 'awalnya', 'at first', 'initially']),
+            'has_conflict': any(p in text for p in ['masalahnya', 'tapi', 'sayangnya', 'unfortunately', 'the problem']),
+            'has_resolution': any(p in text for p in ['akhirnya', 'finally', 'ternyata', 'solusinya', 'the answer'])
+        }
+        
+        story_element_count = sum(1 for v in story_elements.values() if v)
+        if story_element_count >= 2:
+            context_scores['narrative_strength'] += 0.15
+            context_scores['has_story_arc'] = True
+        elif story_element_count >= 1:
+            context_scores['narrative_strength'] += 0.07
+        
+        # ============================================
+        # CALL TO ACTION STRENGTH
+        # Strong CTAs drive engagement
+        # ============================================
+        cta_patterns = [
+            # Direct commands
+            'lakuin', 'coba', 'mulai', 'start', 'go', 'do it',
+            'praktekin', 'apply', 'implementasi', 'execute',
+            # Soft CTAs
+            'share ini', 'bagikan', 'save for later', 'bookmark',
+            'comment', 'komen', 'dm gue', 'hubungi',
+            # Engagement CTAs
+            'setuju gak', 'gimana menurut', 'what do you think',
+            'pernah gak', 'ada yang', 'siapa yang'
+        ]
+        cta_count = sum(1 for p in cta_patterns if p in text)
+        if cta_count >= 2:
+            context_scores['narrative_strength'] += 0.1
+            context_scores['has_strong_cta'] = True
+        elif cta_count >= 1:
+            context_scores['narrative_strength'] += 0.05
+        
+        # Final normalization
+        context_scores['narrative_strength'] = min(1.0, context_scores['narrative_strength'])
+        context_scores['eq_score'] = min(1.0, context_scores.get('eq_score', 0))
+        
+        # Calculate overall IQ/EQ quality score
+        iq_signals = sum([
+            context_scores.get('has_rhetorical_device', False),
+            context_scores.get('has_contrast', False),
+            context_scores.get('has_power_numbers', False),
+            context_scores.get('has_story_arc', False)
+        ])
+        
+        eq_signals = sum([
+            context_scores.get('targets_pain_point', False),
+            context_scores.get('triggers_aspiration', False),
+            context_scores.get('creates_urgency', False),
+            context_scores.get('has_social_proof', False)
+        ])
+        
+        context_scores['iq_quality'] = min(1.0, iq_signals * 0.25)
+        context_scores['eq_quality'] = min(1.0, eq_signals * 0.25)
+        context_scores['overall_iq_eq_score'] = (context_scores['iq_quality'] + context_scores['eq_quality']) / 2
+        
         return context_scores
     
     def _detect_idea_boundaries(self, segment: Dict, audio_segments: List[Dict]) -> Dict:
@@ -1325,6 +1560,113 @@ class ClipGenerator:
             boundary_quality['idea_completeness'] = 0.4
         
         return boundary_quality
+    
+    def _validate_semantic_context(self, segment: Dict, audio_segments: List[Dict]) -> Dict:
+        """
+        Validate that a clip has complete semantic context.
+        Checks for:
+        - Incomplete sentence patterns
+        - Dangling references (pronouns without antecedent)
+        - Unresolved questions
+        - Context completeness score
+        
+        Returns context validation scores.
+        """
+        text = (segment.get('text') or '').strip()
+        text_lower = text.lower()
+        
+        validation = {
+            'context_complete': True,
+            'confidence': 0.5,
+            'issues': [],
+            'suggestions': []
+        }
+        
+        if not text:
+            validation['context_complete'] = False
+            validation['confidence'] = 0.0
+            return validation
+        
+        # === CHECK 1: Incomplete Sentence Patterns ===
+        # Sentences that start with conjunctions suggesting prior context
+        incomplete_start_patterns = [
+            'tapi kan', 'dan juga', 'terus yang', 'makanya tadi', 'kayak tadi',
+            'seperti yang', 'yang tadi', 'itu tadi', 'jadi tadi', 'nah tadi',
+            'but also', 'and also', 'as I said', 'like I mentioned', 'that\'s why I'
+        ]
+        
+        starts_incomplete = any(text_lower.startswith(p) for p in incomplete_start_patterns)
+        if starts_incomplete:
+            validation['issues'].append('starts_with_prior_reference')
+            validation['confidence'] -= 0.2
+        
+        # === CHECK 2: Dangling Pronouns at Start ===
+        # Clips starting with pronouns referring to something not in clip
+        dangling_pronouns = [
+            'itu ', 'ini ', 'dia ', 'mereka ', 'kita tadi', 'lu tadi', 'gue tadi',
+            'it ', 'they ', 'this ', 'that ', 'he said', 'she said', 'those '
+        ]
+        
+        has_dangling_start = any(text_lower.startswith(p) for p in dangling_pronouns)
+        if has_dangling_start:
+            validation['issues'].append('dangling_pronoun_start')
+            validation['confidence'] -= 0.15
+        
+        # === CHECK 3: Unfinished Thoughts at End ===
+        # Clips ending mid-sentence
+        unfinished_end_patterns = [
+            ' jadi', ' terus', ' dan', ' tapi', ' atau', ' karena', ' supaya',
+            ' agar', ' ketika', ' saat', ' kalau', ' if', ' when', ' because',
+            ' so', ' and', ' but', ' or'
+        ]
+        
+        ends_incomplete = any(text_lower.rstrip().endswith(p) for p in unfinished_end_patterns)
+        if ends_incomplete:
+            validation['issues'].append('ends_mid_sentence')
+            validation['confidence'] -= 0.25
+            validation['suggestions'].append('extend_end_point')
+        
+        # === CHECK 4: Question Without Answer ===
+        # If clip contains a question, check if there's follow-up in same clip
+        question_count = text.count('?')
+        if question_count > 0:
+            # Check if there's content after the question
+            last_question_idx = text.rfind('?')
+            content_after_question = text[last_question_idx + 1:].strip()
+            
+            if len(content_after_question) < 20:  # Very little after question
+                validation['issues'].append('unanswered_question')
+                validation['confidence'] -= 0.1
+                validation['suggestions'].append('extend_to_include_answer')
+        
+        # === CHECK 5: Context Completeness via Word Count ===
+        word_count = len(text.split())
+        if word_count < 10:
+            validation['issues'].append('too_short_for_context')
+            validation['confidence'] -= 0.2
+        elif word_count >= 25:
+            validation['confidence'] += 0.1  # Bonus for sufficient length
+        
+        # === CHECK 6: Has Complete Idea Marker ===
+        complete_idea_markers = [
+            'jadi intinya', 'kesimpulannya', 'poinnya adalah', 'yang penting',
+            'the point is', 'in summary', 'bottom line', 'the key is',
+            'ingat ya', 'catat ini', 'ini penting', 'remember this'
+        ]
+        
+        has_complete_marker = any(m in text_lower for m in complete_idea_markers)
+        if has_complete_marker:
+            validation['confidence'] += 0.2
+            validation['context_complete'] = True
+        
+        # Normalize confidence
+        validation['confidence'] = max(0.0, min(1.0, validation['confidence']))
+        
+        # Determine overall context completeness
+        if validation['confidence'] < 0.3 or len(validation['issues']) >= 3:
+            validation['context_complete'] = False
+        
+        return validation
     
     def _score_segments(self, segments: List[Dict], style: str) -> List[Dict]:
         """
@@ -1395,11 +1737,48 @@ class ClipGenerator:
             # Narrative strength contributes to overall score
             viral_score += narrative_context['narrative_strength'] * 0.12
             
+            # IQ/EQ QUALITY BONUSES (Premium content detection)
+            iq_quality = narrative_context.get('iq_quality', 0)
+            eq_quality = narrative_context.get('eq_quality', 0)
+            overall_iq_eq = narrative_context.get('overall_iq_eq_score', 0)
+            
+            # High IQ content (rhetorical devices, story arcs, power numbers)
+            if iq_quality >= 0.75:
+                viral_score += 0.15  # Premium IQ content
+            elif iq_quality >= 0.5:
+                viral_score += 0.08
+            elif iq_quality >= 0.25:
+                viral_score += 0.04
+            
+            # High EQ content (pain points, aspirations, urgency, social proof)
+            if eq_quality >= 0.75:
+                viral_score += 0.18  # Premium EQ content - highly engaging
+            elif eq_quality >= 0.5:
+                viral_score += 0.10
+            elif eq_quality >= 0.25:
+                viral_score += 0.05
+            
+            # Synergy bonus: content with BOTH high IQ and EQ is exceptional
+            if iq_quality >= 0.5 and eq_quality >= 0.5:
+                viral_score += 0.12  # IQ/EQ synergy bonus
+            
             # Determine category
             category = self._determine_category(segment)
             
             # Check if duration is suitable
             suitable_duration = self._check_duration_suitability(segment['duration'])
+            
+            # SEMANTIC CONTEXT VALIDATION
+            # Validate that clip has complete, coherent context
+            semantic_validation = self._validate_semantic_context(segment, segments)
+            
+            # Apply penalty for incomplete context
+            if not semantic_validation['context_complete']:
+                viral_score *= 0.7  # Significant penalty for incomplete context
+            elif semantic_validation['confidence'] < 0.4:
+                viral_score *= 0.85  # Moderate penalty for low confidence
+            elif semantic_validation['confidence'] > 0.7:
+                viral_score += 0.05  # Small bonus for high confidence context
             
             scored.append({
                 **segment,
@@ -1408,13 +1787,31 @@ class ClipGenerator:
                 'suitable_duration': suitable_duration,
                 'narrative_context': narrative_context,
                 'content_type': content_type,
-                'creator_style': creator_style
+                'creator_style': creator_style,
+                'semantic_context': semantic_validation
             })
         
         # Sort by viral score
         scored.sort(key=lambda x: x['viral_score'], reverse=True)
         
-        print(f"   🧠 Applied IQ/EQ context analysis to {len(scored)} segments")
+        # Log context quality stats
+        complete_context_count = sum(1 for s in scored if s.get('semantic_context', {}).get('context_complete', False))
+        
+        # IQ/EQ quality stats
+        high_iq_count = sum(1 for s in scored if s.get('narrative_context', {}).get('iq_quality', 0) >= 0.5)
+        high_eq_count = sum(1 for s in scored if s.get('narrative_context', {}).get('eq_quality', 0) >= 0.5)
+        premium_count = sum(1 for s in scored 
+                          if s.get('narrative_context', {}).get('iq_quality', 0) >= 0.5 
+                          and s.get('narrative_context', {}).get('eq_quality', 0) >= 0.5)
+        
+        print(f"   🧠 Applied HIGH IQ/EQ context analysis to {len(scored)} segments")
+        print(f"   📝 Context: {complete_context_count}/{len(scored)} complete | IQ≥50%: {high_iq_count} | EQ≥50%: {high_eq_count} | Premium: {premium_count}")
+        
+        # Show top 3 IQ/EQ scores if available
+        if scored and len(scored) >= 3:
+            top3_iq = [s.get('narrative_context', {}).get('iq_quality', 0) for s in scored[:3]]
+            top3_eq = [s.get('narrative_context', {}).get('eq_quality', 0) for s in scored[:3]]
+            print(f"   ⭐ Top 3 clips - IQ: {[f'{x:.0%}' for x in top3_iq]} | EQ: {[f'{x:.0%}' for x in top3_eq]}")
         
         return scored
     
