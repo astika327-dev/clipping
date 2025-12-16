@@ -230,8 +230,41 @@ python -c "import whisper; whisper.load_model('base')"
 - [ ] Auto-generate captions/subtitles
 - [ ] Background music suggestion
 - [ ] Batch processing multiple videos
-- [ ] Cloud deployment
+- [x] ~~Cloud deployment~~ ✅ AWS Ready!
 - [ ] API untuk integrasi
+
+## ☁️ AWS Cloud Deployment
+
+Deploy ke AWS untuk processing lebih cepat dengan GPU!
+
+### Quick Deploy Options:
+
+| Method                                      | Time   | Complexity  |
+| ------------------------------------------- | ------ | ----------- |
+| [CloudFormation](./aws-cloudformation.yaml) | 10 min | ⭐ Easy     |
+| [Shell Script](./aws_setup.sh)              | 15 min | ⭐⭐ Medium |
+| [Docker](./docker-compose.yml)              | 5 min  | ⭐ Easy     |
+
+### On-Demand (Hemat Biaya!)
+
+Jalankan **hanya saat diperlukan** - hemat hingga 96%!
+
+```powershell
+# Setup sekali
+cd aws-scripts
+.\setup-aws.ps1
+
+# Penggunaan harian
+.\start-clipper.ps1   # Start instance
+# ... gunakan aplikasi ...
+.\stop-clipper.ps1    # Stop (PENTING!)
+```
+
+📖 **Guides:**
+
+- [AWS Quick Start](./AWS_QUICKSTART.md) - Deploy dalam 10 menit
+- [AWS Full Guide](./AWS_DEPLOYMENT.md) - Panduan lengkap
+- [On-Demand Guide](./AWS_ONDEMAND.md) - Hemat biaya
 
 ## 📝 License
 

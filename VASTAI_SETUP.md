@@ -129,6 +129,28 @@ FASTER_WHISPER_COMPUTE_TYPE = 'float16'
 USE_GPU_ACCELERATION = True
 ```
 
+### Jika muncul error `libcudnn_ops.so`
+
+Instance Vast.ai biasanya sudah menyertakan CUDA + cuDNN, tetapi beberapa image minimal tidak memaketkan pustaka cuDNN 9.1 yang dibutuhkan oleh PyTorch/Faster-Whisper (mis. pesan `Unable to load any of libcudnn_ops.so...`). Cara tercepat untuk memasangnya:
+
+```bash
+# Download cuDNN 9.1 untuk CUDA 12.1
+cd /tmp
+wget https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/linux-x86_64/cudnn-linux-x86_64-9.1.0.70_cuda12.1-archive.tar.xz
+
+# Ekstrak dan copy ke lokasi CUDA default
+tar -xJf cudnn-linux-x86_64-9.1.0.70_cuda12.1-archive.tar.xz
+sudo cp cudnn-linux-x86_64-9.1.0.70_cuda12.1-archive/include/cudnn*.h /usr/local/cuda/include/
+sudo cp cudnn-linux-x86_64-9.1.0.70_cuda12.1-archive/lib/libcudnn* /usr/local/cuda/lib64/
+sudo chmod a+r /usr/local/cuda/include/cudnn*.h /usr/local/cuda/lib64/libcudnn*
+sudo ldconfig
+
+# Verifikasi
+python -c "import torch; print('CUDA available:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0))"
+```
+
+Setelah selesai, restart backend (`pkill -f "python app.py" && python app.py`) supaya Faster-Whisper memuat ulang cuDNN.
+
 ---
 
 ## 📁 Step 7: Create Required Folders
@@ -322,3 +344,6 @@ scp -P 50950 -r root@171.101.230.251:~/clipping/backend/outputs/ C:\Users\YourNa
 ---
 
 **Last Updated**: 2025-12-13
+pip install mediapipe
+
+pip install --upgrade mediapipe

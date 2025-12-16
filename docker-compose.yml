@@ -1,0 +1,60 @@
+# ================================================
+# AI Video Clipper - Docker Compose
+# ================================================
+# Usage:
+#   GPU:  docker-compose up -d
+#   CPU:  docker-compose -f docker-compose.yml -f docker-compose.cpu.yml up -d
+# ================================================
+
+version: "3.8"
+
+services:
+  clipper:
+    build: .
+    container_name: ai-video-clipper
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "5000:5000"
+    volumes:
+      - ./data/uploads:/app/backend/uploads
+      - ./data/outputs:/app/backend/outputs
+      - ./backend/.env:/app/backend/.env:ro
+    environment:
+      - FLASK_ENV=production
+      - TRANSCRIPTION_BACKEND=faster-whisper
+      - FASTER_WHISPER_DEVICE=cuda
+      - FASTER_WHISPER_COMPUTE_TYPE=float16
+      - FASTER_WHISPER_MODEL=large-v3
+      - ENABLE_DEEP_LEARNING_VIDEO=true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:alpine
+    container_name: clipper-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  redis-data:
+
+networks:
+  default:
+    name: clipper-network
