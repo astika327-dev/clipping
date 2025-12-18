@@ -2069,14 +2069,14 @@ class ClipGenerator:
         if visual.get('has_faces'):
             visual_bonus += 0.05
         
-        # ENTERPRISE: Visual-Audio Coherence (Ghost Speaker Check)
-        # Penalize if audio is active but visual subject is NOT talking
-        # This prevents "Reaction Shot" clips where we hear someone else talking
-        is_talking_visual = visual.get('is_talking', True) # Default true if missing
-        if not is_talking_visual and not is_fallback:
-             # Only penalize if we are sure faces are present but not moving lips
-             if visual.get('has_faces') and visual.get('face_count', 0) > 0:
-                 total_score *= 0.65  # Heavy penalty for off-screen speaker focus
+        # Ghost speaker check variables (penalty applied after total_score is calculated)
+        is_talking_visual = visual.get('is_talking', True)  # Default true if missing
+        has_ghost_speaker_issue = (
+            not is_talking_visual and 
+            not is_fallback and 
+            visual.get('has_faces') and 
+            visual.get('face_count', 0) > 0
+        )
         
         # ENTERPRISE: Pacing Score (WPM)
         # Favor energetic delivery (130-180 WPM)
@@ -2123,6 +2123,10 @@ class ClipGenerator:
         
         # Apply fallback multiplier to boost monolog/podcast scores slightly
         total_score *= fallback_multiplier
+        
+        # ENTERPRISE: Apply Ghost Speaker Penalty (visual not talking but audio active)
+        if has_ghost_speaker_issue:
+            total_score *= 0.65  # Heavy penalty for off-screen speaker focus
 
         if is_fallback:
             fallback_floor = getattr(self.config, 'FALLBACK_VIRAL_SCORE', 0.15) + 0.05
