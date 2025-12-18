@@ -274,9 +274,18 @@ class ClipGenerator:
             selected = self._guarantee_minimum_clips(selected, scored_segments, video_analysis, audio_analysis, forced_min)
         
         # CONTEXT SNAPPING: Adjust clip boundaries to align with sentence/speech breaks
-        # This ensures clips don't cut mid-sentence for better contextual coherence
         if audio_segments:
             selected = self._snap_to_context_boundaries(selected, audio_segments)
+
+        # ENTERPRISE FEATURE: Smart Narrative Stitching
+        # Merge close segments to create longer, richer narrative arcs (Podcast style)
+        if target_duration in ['long', 'extended', 'all']:
+             selected = self._smart_stitch_segments(selected, audio_segments, max_gap=8.0)
+        
+        # ENTERPRISE FEATURE: Start/End Polish
+        # Trim weak semantic connectors for professional impact
+        selected = self._polish_clip_boundaries(selected)
+
         
         # Generate clip metadata
         clips = self._create_clip_metadata(selected, hook_mode=hook_mode)
@@ -317,7 +326,8 @@ class ClipGenerator:
             start = 0
             while start + length <= video_duration + 5:
                 end = min(start + length, video_duration)
-                if end - start >= 8:  # Minimum 8 seconds
+                if end - start >= 20:  # Minimum 20 seconds for podcasts
+
                     segments.append({
                         'start': start,
                         'end': end,
@@ -486,8 +496,13 @@ class ClipGenerator:
                         'has_closeup': scene.get('has_closeup', True),
                         'motion_score': scene.get('motion_score', 0.3),
                         'has_high_motion': scene.get('has_high_motion', False),
-                        'visual_engagement': scene.get('visual_engagement', 0.5)
+                        'visual_engagement': scene.get('visual_engagement', 0.5),
+                        'is_talking': scene.get('is_talking', True)  # Use DL result or default True
                     },
+                    'speaker_left_ratio': scene.get('speaker_left_ratio', 0),
+                    'speaker_right_ratio': scene.get('speaker_right_ratio', 0),
+                    'is_conversation': scene.get('is_conversation', False),
+                    'dl_speaker_analysis': scene.get('dl_speaker_analysis', {}),
                     'audio': avg_audio_scores
                 })
         
@@ -518,9 +533,117 @@ class ClipGenerator:
         if not merged and audio_segments:
             print("🆘 No segments found. Creating emergency segments from audio directly...")
             merged = self._create_emergency_segments(audio_segments, video_duration)
+            
+        # REFINEMENT: If we have detailed speaker timeline, refine segments based on turns
+        # This is key for 2-person podcasts to split "Q&A" or "Dialogue" correctly
+        merged = self._refine_segments_with_speaker_turns(merged, scenes)
         
         print(f"📊 Total merged segments: {len(merged)}")
         return merged
+
+    def _refine_segments_with_speaker_turns(self, segments: List[Dict], scenes: List[Dict]) -> List[Dict]:
+        """
+        Refine segments by splitting them at speaker transitions (turns).
+        Uses the 'speaker_timeline' from AdvancedVideoAnalyzer.
+        """
+        if not segments or not scenes:
+            return segments
+            
+        print("   👥 Refining segments based on speaker turns...")
+        refined = []
+        
+        # Helper to find scene for a segment
+        def get_scene_for_segment(seg):
+            mid = (seg['start'] + seg['end']) / 2
+            for sc in scenes:
+                if sc['start_time'] <= mid <= sc['end_time']:
+                    return sc
+            return None
+        
+        for seg in segments:
+            scene = get_scene_for_segment(seg)
+            timeline = scene.get('dl_speaker_analysis', {}).get('timeline', []) if scene else []
+            
+            if not timeline or len(timeline) < 2:
+                refined.append(seg)
+                continue
+            
+            # Helper to check if a timestamp falls in this segment
+            seg_start = seg['start']
+            seg_end = seg['end']
+            
+            # Get valid timeline points for this segment
+            valid_points = [p for p in timeline if seg_start <= p['timestamp'] <= seg_end]
+            
+            if not valid_points:
+                refined.append(seg)
+                continue
+                
+            # Detect turns: Left (Active) vs Right (Active)
+            # We look for sustained blocks of one speaker
+            transitions = []
+            
+            # Smooth out state using a sliding window? 
+            # Simple approach: Find change in dominant speaker
+            current_speaker = None # 'left', 'right', 'both', 'none'
+            last_switch_time = seg_start
+            
+            for point in valid_points:
+                ts = point['timestamp']
+                
+                # Determine state at this point
+                state = 'none'
+                if point.get('active_left') and point.get('active_right'):
+                    state = 'both'
+                elif point.get('active_left'):
+                    state = 'left'
+                elif point.get('active_right'):
+                    state = 'right'
+                
+                if state == 'none': continue
+                
+                if current_speaker is None:
+                    current_speaker = state
+                    last_switch_time = ts
+                elif state != current_speaker and state != 'both': # 'both' maintains current context usually
+                    # Potential switch found
+                    # Only register if duration since last switch is meaningful (> 10s)
+                    if ts - last_switch_time > 10.0:
+                        transitions.append(ts)
+                        current_speaker = state
+                        last_switch_time = ts
+            
+            if not transitions:
+                refined.append(seg)
+                continue
+            
+            # Split segment at transitions
+            current_start = seg_start
+            print(f"      ✂️ Splitting segment {seg_start:.1f}-{seg_end:.1f} at speaker turns: {[round(t,1) for t in transitions]}")
+            
+            # Split text? We can't easily split text without re-aligning words. 
+            # So we duplicate the text/audio metadata but adjust times. 
+            # Ideally we would re-fetch text for the new time range, but we don't have that granularity easily.
+            # Best effort: Just adjust times and hope audio alignment works later or is permissive.
+            # Actually, `clip_generator` downstream uses `start`/`end` to strip audio/video. 
+            # The text in metadata is mostly for analysis/title.
+            
+            split_points = transitions + [seg_end]
+            
+            for split_ts in split_points:
+                if split_ts - current_start < 15.0: # Ignore slivers < 15s (keep context)
+                    continue
+                    
+                new_seg = seg.copy()
+                new_seg['start'] = current_start
+                new_seg['end'] = split_ts
+                new_seg['duration'] = split_ts - current_start
+                new_seg['split_by_turn'] = True
+                new_seg['text'] = f"[Speaker Turn] {seg.get('text', '')}" # Marker
+                refined.append(new_seg)
+                current_start = split_ts
+                
+        return refined
     
     def _snap_to_context_boundaries(self, segments: List[Dict], audio_segments: List[Dict]) -> List[Dict]:
         """
@@ -666,7 +789,7 @@ class ClipGenerator:
             
             # Validate new duration
             new_duration = best_end - best_start
-            min_duration = max(8, original_duration * 0.7)
+            min_duration = max(15, original_duration * 0.7)
             max_duration = original_duration * 1.35  # Slightly more flexibility
             
             if new_duration < min_duration or new_duration > max_duration:
@@ -1717,6 +1840,15 @@ class ClipGenerator:
             elif content_type == 'educational':
                 viral_score += 0.15  # Educational content (Prof Kaka style)
             
+            # CONVERSATIONAL METRICS (New)
+            # Boost score for dynamic conversations (2-person podcasts)
+            if segment.get('is_conversation', False):
+                # Balanced conversation bonus
+                left = segment.get('speaker_left_ratio', 0)
+                right = segment.get('speaker_right_ratio', 0)
+                if left > 0.1 and right > 0.1:
+                    viral_score += 0.12  # Bonus for active back-and-forth
+            
             # CREATOR SIGNATURE BONUSES
             if narrative_context.get('is_timoty_signature'):
                 viral_score += 0.15  # Timothy signature patterns
@@ -1879,7 +2011,30 @@ class ClipGenerator:
         if visual.get('has_high_motion'):
             visual_bonus += 0.08  # Increased from 0.05
         if visual.get('has_faces'):
-            visual_bonus += 0.05  # Added face detection bonus
+            visual_bonus += 0.05
+        
+        # ENTERPRISE: Visual-Audio Coherence (Ghost Speaker Check)
+        # Penalize if audio is active but visual subject is NOT talking
+        # This prevents "Reaction Shot" clips where we hear someone else talking
+        is_talking_visual = visual.get('is_talking', True) # Default true if missing
+        if not is_talking_visual and not is_fallback:
+             # Only penalize if we are sure faces are present but not moving lips
+             if visual.get('has_faces') and visual.get('face_count', 0) > 0:
+                 total_score *= 0.65  # Heavy penalty for off-screen speaker focus
+        
+        # ENTERPRISE: Pacing Score (WPM)
+        # Favor energetic delivery (130-180 WPM)
+        duration_mins = max(segment['duration'], 1) / 60.0
+        word_count = len(segment.get('text', '').split())
+        wpm = word_count / duration_mins
+        
+        if 130 <= wpm <= 190:
+            content_value += 0.08 # Sweet spot
+        elif wpm < 100:
+            content_value -= 0.05 # Too slow/boring
+        elif wpm > 220:
+            content_value -= 0.05 # Too fast/unclear
+
         
         # Check for questions (high engagement)
         if segment.get('text') and '?' in segment['text']:
@@ -1934,7 +2089,7 @@ class ClipGenerator:
     
     def _check_duration_suitability(self, duration: float) -> str:
         """Check which duration category this segment fits while respecting config min."""
-        min_short = max(5.0, getattr(self.config, 'MIN_CLIP_DURATION', 8))
+        min_short = 15.0  # Enforce 15s minimum for quality context
 
         if duration < min_short:
             return 'custom'
@@ -1958,7 +2113,10 @@ class ClipGenerator:
         
         selected = []
 
-        min_duration = max(5.0, getattr(self.config, 'MIN_CLIP_DURATION', 8))
+        selected = []
+
+        min_duration = 15.0  # Enforce 15s minimum for selection
+
 
         def duration_ok(segment: Dict) -> bool:
             return segment.get('duration', 0) >= min_duration
@@ -2704,3 +2862,88 @@ class ClipGenerator:
             if keyword.lower() in lowered:
                 return keyword.upper()
         return punch_text.split()[0].upper()
+
+    def _smart_stitch_segments(self, selected: List[Dict], audio_segments: List[Dict], max_gap: float = 8.0) -> List[Dict]:
+        """
+        ENTERPRISE FEATURE: Smart Stitching
+        Merge high-quality segments that are close together to form a cohesive narrative.
+        Crucial for podcasts where thoughts are spread across pauses.
+        """
+        if len(selected) < 2:
+            return selected
+            
+        print("   🧵 Running Smart Stitching (Enterprise Narrative Mode)...")
+        stitched = []
+        selected_sorted = sorted(selected, key=lambda x: x['start'])
+        
+        current_clip = selected_sorted[0]
+        
+        for next_clip in selected_sorted[1:]:
+            # Check gap between clips
+            gap = next_clip['start'] - current_clip['end']
+            
+            # Check conditions for stitching:
+            # 1. Gap is small (continuation of thought)
+            # 2. Both clips are same category/topic (simplified checking)
+            # 3. Combined duration is not excessive
+            
+            can_merge = False
+            if 0 < gap <= max_gap:
+                combined_duration = next_clip['end'] - current_clip['start']
+                if combined_duration <= 90: # Allow up to 90s for extended narrative
+                    can_merge = True
+            
+            if can_merge:
+                # Merge logic
+                print(f"      🔗 Merging clips {current_clip['start']:.1f}s and {next_clip['start']:.1f}s (Gap: {gap:.1f}s)")
+                
+                # Fetch detailed text for the gap to ensure continuity
+                gap_text = ""
+                # (Simple linear search for gap text in audio segments could go here)
+                
+                current_clip['end'] = next_clip['end']
+                current_clip['duration'] = current_clip['end'] - current_clip['start']
+                current_clip['text'] = f"{current_clip['text']} ... {next_clip['text']}"
+                current_clip['viral_score'] = max(current_clip['viral_score'], next_clip['viral_score'])
+                current_clip['stitched'] = True
+            else:
+                stitched.append(current_clip)
+                current_clip = next_clip
+                
+        stitched.append(current_clip)
+        print(f"   ✅ Stitched {len(selected)} -> {len(stitched)} clips")
+        return stitched
+
+    def _polish_clip_boundaries(self, clips: List[Dict]) -> List[Dict]:
+        """
+        ENTERPRISE FEATURE: Boundary Polish
+        Trim weak start words (conjunctions) and maximize semantic impact.
+        Basically "auto-editing" the script.
+        """
+        weak_starters = [
+            'dan ', 'and ', 'tapi ', 'but ', 'so ', 'jadi ', 'nah ', 'terus ', 
+            'kemudian ', 'lalu ', 'maka ', 'sedangkan ', 'padahal '
+        ]
+        
+        polished = []
+        for clip in clips:
+            text = clip.get('text', '').strip()
+            text_lower = text.lower()
+            
+            # Check dirty start
+            for starter in weak_starters:
+                if text_lower.startswith(starter):
+                    # In a real audio editor, we would trim the audio start time here.
+                    # Since we rely on words, we try to estimate the shift.
+                    # Avg word duration ~0.3s
+                    shift_est = 0.3
+                    if len(starter.strip()) > 4: shift_est = 0.5
+                    
+                    clip['start'] += shift_est
+                    clip['duration'] -= shift_est
+                    clip['text'] = text[len(starter):].strip().capitalize()
+                    clip['polished'] = True
+                    break
+            
+            polished.append(clip)
+        return polished

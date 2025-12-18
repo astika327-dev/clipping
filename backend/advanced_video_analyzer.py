@@ -142,7 +142,7 @@ class AdvancedFaceAnalyzer:
         }
         
         if mesh_results.multi_face_landmarks:
-            for face_landmarks in mesh_results.multi_face_landmarks:
+            for i, face_landmarks in enumerate(mesh_results.multi_face_landmarks):
                 # Analyze mouth openness (talking detection)
                 # Upper lip: landmark 13, Lower lip: landmark 14
                 upper_lip = face_landmarks.landmark[13]
@@ -161,29 +161,42 @@ class AdvancedFaceAnalyzer:
                 right_corner = face_landmarks.landmark[291]
                 mouth_width = abs(left_corner.x - right_corner.x)
                 
+                # Per-face expression scores
+                face_expressions = {
+                    'neutral': 0.5,
+                    'happy': 0.0,
+                    'surprised': 0.0,
+                    'talking': 0.0
+                }
+                
                 # Estimate expressions
                 if mouth_open > 0.03:
-                    expression_scores['talking'] = min(1.0, mouth_open * 15)
+                    face_expressions['talking'] = min(1.0, mouth_open * 15)
                 
                 if eye_open > 0.025:
-                    expression_scores['surprised'] = min(1.0, (eye_open - 0.02) * 20)
+                    face_expressions['surprised'] = min(1.0, (eye_open - 0.02) * 20)
                 
                 if mouth_width > 0.15:
-                    expression_scores['happy'] = min(1.0, (mouth_width - 0.12) * 10)
+                    face_expressions['happy'] = min(1.0, (mouth_width - 0.12) * 10)
                 
                 # Adjust neutral based on other expressions
-                max_expression = max(expression_scores['happy'], 
-                                   expression_scores['surprised'], 
-                                   expression_scores['talking'])
-                expression_scores['neutral'] = max(0.0, 1.0 - max_expression)
+                max_expression = max(face_expressions['happy'], 
+                                   face_expressions['surprised'], 
+                                   face_expressions['talking'])
+                face_expressions['neutral'] = max(0.0, 1.0 - max_expression)
+                
+                # Attach to corresponding face if available
+                # Note: MediaPipe detections and landmarks usually match index order
+                if i < len(faces):
+                    faces[i]['expressions'] = face_expressions
         
         return {
             'face_count': len(faces),
             'faces': faces,
             'has_closeup': any(f['size_ratio'] > 0.05 for f in faces),  # Face > 5% of frame
-            'expressions': expression_scores,
-            'is_talking': expression_scores['talking'] > 0.3,
-            'is_engaged': expression_scores['happy'] > 0.2 or expression_scores['surprised'] > 0.2
+            'expressions': faces[0]['expressions'] if faces else expression_scores,  # Primary face expressions
+            'is_talking': any(f['expressions']['talking'] > 0.3 for f in faces),
+            'is_engaged': any(f['expressions']['happy'] > 0.2 or f['expressions']['surprised'] > 0.2 for f in faces)
         }
     
     def _fallback_analyze(self, frame: np.ndarray) -> Dict:
@@ -331,20 +344,34 @@ class SpeakerActivityDetector:
         self._face_analyzer = AdvancedFaceAnalyzer()
         self._prev_face_positions = []
         
-    def analyze_speaker_activity(self, frames: List[np.ndarray]) -> Dict:
+    def analyze_speaker_activity(self, sample_data: List[Tuple[np.ndarray, float]]) -> Dict:
         """
         Analyze speaker activity across multiple frames.
-        Detects:
-        - Active speaking (mouth movement)
-        - Head movement (engagement)
-        - Face consistency (same speaker)
+        Returns detailed timeline and aggregate stats.
         """
         talking_frames = 0
         engaged_frames = 0
         face_consistency = []
+        timeline = []
         
-        for frame in frames:
+        # Determine if input is list of tuples (new) or just frames (old fallback)
+        if sample_data and isinstance(sample_data[0], tuple):
+            frames = [f[0] for f in sample_data]
+            timestamps = [f[1] for f in sample_data]
+        else:
+            frames = sample_data
+            timestamps = [0.0] * len(frames)
+        
+        total_frames = max(len(frames), 1)
+        
+        # Accumulators for left/right active
+        left_talking_count = 0
+        right_talking_count = 0
+        
+        for idx, frame in enumerate(frames):
+            ts = timestamps[idx]
             analysis = self._face_analyzer.analyze_frame(frame)
+            faces = analysis.get('faces', [])
             
             if analysis['is_talking']:
                 talking_frames += 1
@@ -353,11 +380,33 @@ class SpeakerActivityDetector:
                 engaged_frames += 1
             
             # Track face position for consistency
-            if analysis['faces']:
-                main_face = analysis['faces'][0]
+            if faces:
+                main_face = faces[0]
                 face_consistency.append(main_face['bbox'])
-        
-        total_frames = max(len(frames), 1)
+            
+            # Detailed frame analysis
+            frame_status = {
+                'timestamp': ts,
+                'has_active_speaker': False,
+                'active_left': False,
+                'active_right': False
+            }
+            
+            for face in faces:
+                # Get center X
+                cx = face['bbox'][0] + face['bbox'][2] / 2
+                is_talking = face.get('expressions', {}).get('talking', 0) > 0.3
+                
+                if is_talking:
+                    frame_status['has_active_speaker'] = True
+                    if cx < 0.5:
+                        left_talking_count += 1
+                        frame_status['active_left'] = True
+                    else:
+                        right_talking_count += 1
+                        frame_status['active_right'] = True
+            
+            timeline.append(frame_status)
         
         # Calculate face position variance (lower = more consistent speaker)
         position_variance = 0.0
@@ -372,7 +421,12 @@ class SpeakerActivityDetector:
             'engagement_ratio': engaged_frames / total_frames,
             'speaker_consistency': 1.0 / (1.0 + position_variance / 10000),  # 0-1, higher = more consistent
             'is_active_speaker': talking_frames / total_frames > 0.3,
-            'is_engaged_content': engaged_frames / total_frames > 0.2
+            'is_engaged_content': engaged_frames / total_frames > 0.2,
+            'active_speakers': {
+                'left': left_talking_count / total_frames,
+                'right': right_talking_count / total_frames
+            },
+            'timeline': timeline
         }
     
     def cleanup(self):
@@ -443,6 +497,7 @@ class AdvancedVideoAnalyzer:
     def _enhance_scenes_with_dl(self, scenes: List[Dict], metadata: Dict) -> List[Dict]:
         """
         Enhance each scene with deep learning analysis.
+        For long scenes (>30s), performs denser sampling to capture dynamics.
         """
         print("   🧠 Running deep learning analysis on scenes...")
         
@@ -458,16 +513,21 @@ class AdvancedVideoAnalyzer:
             
             start_time = scene.get('start_time', 0)
             end_time = scene.get('end_time', start_time + 10)
+            duration = end_time - start_time
+            
+            # Adaptive sampling: More samples for longer scenes
+            # Base 3 samples, plus 1 for every 5 seconds of duration, max 20
+            num_samples = min(20, 3 + int(duration / 5))
             
             # Sample frames from this scene
-            sample_frames = self._sample_frames(cap, start_time, end_time, fps, num_samples=3)
+            sample_data = self._sample_frames(cap, start_time, end_time, fps, num_samples=num_samples)
             
-            if not sample_frames:
+            if not sample_data:
                 enhanced_scenes.append(scene)
                 continue
             
             # Run deep learning analysis
-            dl_analysis = self._analyze_frames_dl(sample_frames)
+            dl_analysis = self._analyze_frames_dl(sample_data)
             
             # Merge with existing scene data
             enhanced_scene = {**scene, **dl_analysis}
@@ -483,8 +543,8 @@ class AdvancedVideoAnalyzer:
         cap.release()
         return enhanced_scenes
     
-    def _sample_frames(self, cap, start_time: float, end_time: float, fps: float, num_samples: int = 3) -> List[np.ndarray]:
-        """Sample frames from a time range."""
+    def _sample_frames(self, cap, start_time: float, end_time: float, fps: float, num_samples: int = 3) -> List[Tuple[np.ndarray, float]]:
+        """Sample frames from a time range, returning (frame, timestamp) tuples."""
         frames = []
         sample_times = np.linspace(start_time, end_time, num_samples)
         
@@ -495,31 +555,39 @@ class AdvancedVideoAnalyzer:
             if ret:
                 # Resize for faster processing
                 frame = cv2.resize(frame, (640, 360))
-                frames.append(frame)
+                frames.append((frame, t))
         
         return frames
     
-    def _analyze_frames_dl(self, frames: List[np.ndarray]) -> Dict:
+    def _analyze_frames_dl(self, sample_data: List[Tuple[np.ndarray, float]]) -> Dict:
         """Run all deep learning analyzers on frames."""
         result = {
             'dl_face_analysis': {},
             'dl_object_analysis': {},
             'dl_speaker_analysis': {},
+            'speaker_timeline': []
         }
         
+        if not sample_data:
+            return result
+            
+        frames = [f[0] for f in sample_data]
+        
         # Face analysis (on middle frame)
-        if self._face_analyzer and frames:
-            middle_frame = frames[len(frames)//2]
-            result['dl_face_analysis'] = self._face_analyzer.analyze_frame(middle_frame)
+        if self._face_analyzer:
+            middle_idx = len(frames)//2
+            result['dl_face_analysis'] = self._face_analyzer.analyze_frame(frames[middle_idx])
         
         # Object detection (on middle frame)
-        if self._object_detector and frames:
-            middle_frame = frames[len(frames)//2]
-            result['dl_object_analysis'] = self._object_detector.detect(middle_frame)
+        if self._object_detector:
+            middle_idx = len(frames)//2
+            result['dl_object_analysis'] = self._object_detector.detect(frames[middle_idx])
         
-        # Speaker activity (across all frames)
-        if self._speaker_detector and frames:
-            result['dl_speaker_analysis'] = self._speaker_detector.analyze_speaker_activity(frames)
+        # Speaker activity (across all frames with timestamps)
+        if self._speaker_detector:
+            speaker_analysis = self._speaker_detector.analyze_speaker_activity(sample_data)
+            result['dl_speaker_analysis'] = speaker_analysis
+            result['speaker_timeline'] = speaker_analysis.get('timeline', [])
         
         # Extract key metrics for easy access
         face = result['dl_face_analysis']
@@ -533,6 +601,17 @@ class AdvancedVideoAnalyzer:
         result['is_interview'] = obj.get('is_interview', False)
         result['talking_ratio'] = speaker.get('talking_ratio', 0.0)
         result['speaker_consistency'] = speaker.get('speaker_consistency', 0.5)
+        
+        # Add detailed speaker metrics
+        active_speakers = speaker.get('active_speakers', {})
+        result['speaker_left_ratio'] = active_speakers.get('left', 0.0)
+        result['speaker_right_ratio'] = active_speakers.get('right', 0.0)
+        
+        # Detect if it's a "Left vs Right" conversation scene
+        if result['is_interview'] and (result['speaker_left_ratio'] > 0.1 or result['speaker_right_ratio'] > 0.1):
+            result['is_conversation'] = True
+        else:
+            result['is_conversation'] = False
         
         return result
     
