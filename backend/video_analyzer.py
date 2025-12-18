@@ -201,17 +201,23 @@ class VideoAnalyzer:
         """
         Create synthetic scenes for monolog/podcast videos.
         Ensures we always have segments to work with.
+        ENHANCED: Better segment lengths for long podcasts (1-2+ hours).
         """
         if existing_scenes is None:
             existing_scenes = []
             
         # Calculate optimal segment lengths based on duration
+        # Longer videos need longer segments for context
         if duration <= 60:
             segment_lengths = [15, 20]
         elif duration <= 300:  # 5 minutes
             segment_lengths = [15, 20, 25]
-        else:
-            segment_lengths = [15, 20, 25, 30]
+        elif duration <= 1800:  # 30 minutes
+            segment_lengths = [20, 25, 30, 40]
+        elif duration <= 3600:  # 1 hour
+            segment_lengths = [25, 30, 40, 50]  # Longer segments for podcasts
+        else:  # > 1 hour (very long podcasts)
+            segment_lengths = [30, 40, 50, 60]  # Even longer for epic conversations
         
         synthetic_scenes = []
         
