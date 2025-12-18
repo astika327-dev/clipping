@@ -336,6 +336,22 @@ def download_youtube_video():
 
 import numpy as np
 
+class NumpyEncoder(json.JSONEncoder):
+    """ Custom encoder for numpy data types """
+    def default(self, obj):
+        if isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
+                            np.int16, np.int32, np.int64, np.uint8,
+                            np.uint16, np.uint32, np.uint64)):
+            return int(obj)
+        elif isinstance(obj, (np.float_, np.float16, np.float32,
+                              np.float64)):
+            return float(obj)
+        elif isinstance(obj, (np.ndarray,)):
+            return obj.tolist()
+        elif hasattr(obj, 'item'):
+            return obj.item()
+        return json.JSONEncoder.default(self, obj)
+
 def convert_numpy_types(obj):
     """
     Convert numpy types to native python types for JSON serialization
@@ -346,6 +362,13 @@ def convert_numpy_types(obj):
         return [convert_numpy_types(i) for i in obj]
     elif isinstance(obj, np.ndarray):
         return obj.tolist()
+    elif isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
+                          np.int16, np.int32, np.int64, np.uint8,
+                          np.uint16, np.uint32, np.uint64)):
+        return int(obj)
+    elif isinstance(obj, (np.float_, np.float16, np.float32,
+                          np.float64)):
+        return float(obj)
     elif hasattr(obj, 'item'):
         return obj.item()
     return obj
@@ -560,7 +583,7 @@ def process_video():
                         'total_clips': len(clips),
                         'exported_clips': len(exported_files)
                     }
-                }, f, indent=2, ensure_ascii=False)
+                }, f, indent=2, ensure_ascii=False, cls=NumpyEncoder)
             
             # Update status
             processing_status[job_id] = {

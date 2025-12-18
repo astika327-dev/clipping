@@ -1,0 +1,26 @@
+{
+    "ImageId": "ami-04c4b91fde394e924",
+    "InstanceType": "t3.xlarge",
+    "KeyName": "clipper-key-credit",
+    "SecurityGroupIds": ["sg-03e34a98458f09437"],
+    "BlockDeviceMappings": [
+        {
+            "DeviceName": "/dev/sda1",
+            "Ebs": {
+                "VolumeSize": 100,
+                "VolumeType": "gp3"
+            }
+        }
+    ],
+    "TagSpecifications": [
+        {
+            "ResourceType": "instance",
+            "Tags": [
+                {
+                    "Key": "Name",
+                    "Value": "AI-Clipper-Credit"
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,29 @@
+{
+    "ImageId":  "ami-04c4b91fde394e924",
+    "InstanceType":  "t3.large",
+    "KeyName":  "clipper-key-credit",
+    "SecurityGroupIds":  [
+                             "sg-03e34a98458f09437"
+                         ],
+    "BlockDeviceMappings":  [
+                                {
+                                    "DeviceName":  "/dev/sda1",
+                                    "Ebs":  {
+                                                "VolumeSize":  100,
+                                                "VolumeType":  "gp3"
+                                            }
+                                }
+                            ],
+    "TagSpecifications":  [
+                              {
+                                  "ResourceType":  "instance",
+                                  "Tags":  [
+                                               {
+                                                   "Key":  "Name",
+                                                   "Value":  "AI-Clipper-Credit"
+                                               }
+                                           ]
+                              }
+                          ],
+    "UserData":  "IyEvYmluL2Jhc2gKZXhlYyA+ID4odGVlIC92YXIvbG9nL3VzZXItZGF0YS5sb2cpIDI+JjEKZWNobyAiPT09IENSRURJVCBUSUVSIFNFVFVQIChISUdIIFBFUkYpID09PSIKCiMgMTAwR0IgRGlzayBpcyBlbm91Z2gsIGJ1dCA0R0Igc3dhcCBpcyBzdGlsbCBnb29kIGZvciBzdGFiaWxpdHkKZmFsbG9jYXRlIC1sIDRHIC9zd2FwZmlsZSAmJiBjaG1vZCA2MDAgL3N3YXBmaWxlICYmIG1rc3dhcCAvc3dhcGZpbGUgJiYgc3dhcG9uIC9zd2FwZmlsZQplY2hvICcvc3dhcGZpbGUgbm9uZSBzd2FwIHN3IDAgMCcgPj4gL2V0Yy9mc3RhYgoKYXB0LWdldCB1cGRhdGUgJiYgYXB0LWdldCBpbnN0YWxsIC15IHB5dGhvbjMtcGlwIHB5dGhvbjMtdmVudiBmZm1wZWcgZ2l0IG5naW54IG5vZGVqcyBucG0KCiMgSW5zdGFsbCBOb2RlSlMgMjAKY3VybCAtZnNTTCBodHRwczovL2RlYi5ub2Rlc291cmNlLmNvbS9zZXR1cF8yMC54IHwgYmFzaCAtICYmIGFwdC1nZXQgaW5zdGFsbCAteSBub2RlanMKCmNkIC9ob21lL3VidW50dQpnaXQgY2xvbmUgaHR0cHM6Ly9naXRodWIuY29tL2FzdGlrYTMyNy1kZXYvY2xpcHBpbmcuZ2l0CmNob3duIC1SIHVidW50dTp1YnVudHUgY2xpcHBpbmcKY2QgY2xpcHBpbmcvYmFja2VuZAoKIyBWaXJ0dWFsIEVudgpweXRob24zIC1tIHZlbnYgdmVudgpzb3VyY2UgdmVudi9iaW4vYWN0aXZhdGUKCiMgSW5zdGFsbCBGdWxsIFB5VG9yY2ggKENQVSkKcGlwIGluc3RhbGwgdG9yY2ggdG9yY2h2aXNpb24gdG9yY2hhdWRpbyAtLWluZGV4LXVybCBodHRwczovL2Rvd25sb2FkLnB5dG9yY2gub3JnL3dobC9jcHUKCiMgSW5zdGFsbCBBbGwgUmVxdWlyZW1lbnRzCnBpcCBpbnN0YWxsIC1yIHJlcXVpcmVtZW50cy50eHQKCiMgQ29uZmlnIC5lbnYKY3AgLmVudi5leGFtcGxlIC5lbnYKY2F0ID4+IC5lbnYgPDxFT1QKCiMgPT09IENSRURJVCBUSUVSIE9WRVJSSURFUyA9PT0KVFJBTlNDUklQVElPTl9CQUNLRU5EPWZhc3Rlci13aGlzcGVyCldISVNQRVJfTU9ERUw9bWVkaXVtCkZBU1RFUl9XSElTUEVSX01PREVMPW1lZGl1bQpGQVNURVJfV0hJU1BFUl9ERVZJQ0U9Y3B1CkZBU1RFUl9XSElTUEVSX0NPTVBVVEVfVFlQRT1pbnQ4CkVOQUJMRV9ERUVQX0xFQVJOSU5HX1ZJREVPPXRydWUKWU9MT19NT0RFTF9TSVpFPW4KR1JPUV9BUElfRU5BQkxFRD10cnVlClVTRV9HUFVfQUNDRUxFUkFUSU9OPWZhbHNlClZJREVPX0NPREVDPWxpYngyNjQKTlZFTkNfUFJFU0VUPWZhc3RlcgpQUk9DRVNTSU5HX0NPTkNVUlJFTkNZPTIKRU9UCgpta2RpciAtcCB1cGxvYWRzIG91dHB1dHMKCiMgQnVpbGQgRnJvbnRlbmQKY2QgLi4vZnJvbnRlbmQgJiYgbnBtIGluc3RhbGwgJiYgbnBtIHJ1biBidWlsZAoKIyBOZ2lueCAmIFN5c3RlbWQKY2F0ID4gL2V0Yy9zeXN0ZW1kL3N5c3RlbS9jbGlwcGVyLWJhY2tlbmQuc2VydmljZSA8PCAnRU9GJwpbVW5pdF0KRGVzY3JpcHRpb249QmFja2VuZApBZnRlcj1uZXR3b3JrLnRhcmdldApbU2VydmljZV0KVXNlcj11YnVudHUKV29ya2luZ0RpcmVjdG9yeT0vaG9tZS91YnVudHUvY2xpcHBpbmcvYmFja2VuZApFbnZpcm9ubWVudD0iUEFUSD0vaG9tZS91YnVudHUvY2xpcHBpbmcvdmVudi9iaW46L3Vzci9iaW4iCkV4ZWNTdGFydD0vaG9tZS91YnVudHUvY2xpcHBpbmcvdmVudi9iaW4vcHl0aG9uIGFwcC5weSAtLXByb2R1Y3Rpb24gLS1wb3J0IDUwMDAKUmVzdGFydD1hbHdheXMKW0luc3RhbGxdCldhbnRlZEJ5PW11bHRpLXVzZXIudGFyZ2V0CkVPRgoKc3lzdGVtY3RsIGVuYWJsZSBjbGlwcGVyLWJhY2tlbmQgJiYgc3lzdGVtY3RsIHN0YXJ0IGNsaXBwZXItYmFja2VuZAoKY2F0ID4gL2V0Yy9uZ2lueC9zaXRlcy1hdmFpbGFibGUvY2xpcHBlciA8PCAnTkdJTlgnCnNlcnZlciB7CiAgICBsaXN0ZW4gODA7CiAgICBsb2NhdGlvbiAvIHsgcm9vdCAvaG9tZS91YnVudHUvY2xpcHBpbmcvZnJvbnRlbmQvZGlzdDsgdHJ5X2ZpbGVzICR1cmkgJHVyaS8gL2luZGV4Lmh0bWw7IH0KICAgIGxvY2F0aW9uIH4gXi8odXBsb2FkfHByb2Nlc3N8c3RhdHVzfGRvd25sb2FkfGNsaXBzfHN0b3JhZ2V8c3lzdGVtfGhlYWx0aHx5b3V0dWJlfGFwaSkgewogICAgICAgIHByb3h5X3Bhc3MgaHR0cDovLzEyNy4wLjAuMTo1MDAwOwogICAgICAgIHByb3h5X2h0dHBfdmVyc2lvbiAxLjE7CiAgICAgICAgcHJveHlfc2V0X2hlYWRlciBIb3N0ICRob3N0OwogICAgICAgIGNsaWVudF9tYXhfYm9keV9zaXplIDEwRzsKICAgICAgICBwcm94eV9yZWFkX3RpbWVvdXQgOTAwOwogICAgICAgIHNlbmRfdGltZW91dCA5MDA7CiAgICB9Cn0KTkdJTlgKCmxuIC1zZiAvZXRjL25naW54L3NpdGVzLWF2YWlsYWJsZS9jbGlwcGVyIC9ldGMvbmdpbngvc2l0ZXMtZW5hYmxlZC8Kcm0gLWYgL2V0Yy9uZ2lueC9zaXRlcy1lbmFibGVkL2RlZmF1bHQKbmdpbnggLXQgJiYgc3lzdGVtY3RsIHJlc3RhcnQgbmdpbngK"
+}
