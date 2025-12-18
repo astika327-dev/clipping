@@ -59,8 +59,8 @@ class Config:
     WHISPER_LANGUAGE = os.environ.get('WHISPER_LANGUAGE', 'id')  # Default: Indonesian
     FASTER_WHISPER_MODEL = os.environ.get('FASTER_WHISPER_MODEL', 'large')
     FASTER_WHISPER_FALLBACK_MODEL = os.environ.get('FASTER_WHISPER_FALLBACK_MODEL', 'base')
-    FASTER_WHISPER_DEVICE = os.environ.get('FASTER_WHISPER_DEVICE', 'cuda')  # RTX 3060: use CUDA
-    FASTER_WHISPER_COMPUTE_TYPE = os.environ.get('FASTER_WHISPER_COMPUTE_TYPE', 'float16')  # Optimized for RTX 3060
+    FASTER_WHISPER_DEVICE = os.environ.get('FASTER_WHISPER_DEVICE', 'cpu')  # Use CPU for stability (set 'cuda' if GPU works)
+    FASTER_WHISPER_COMPUTE_TYPE = os.environ.get('FASTER_WHISPER_COMPUTE_TYPE', 'int8')  # 'int8' for CPU, 'float16' for GPU
     FASTER_WHISPER_BEAM_SIZE = int(os.environ.get('FASTER_WHISPER_BEAM_SIZE', 1))  # Lower = faster
     FASTER_WHISPER_CHUNK_LENGTH = int(os.environ.get('FASTER_WHISPER_CHUNK_LENGTH', 30))
     FASTER_WHISPER_VAD_FILTER = os.environ.get('FASTER_WHISPER_VAD_FILTER', 'true').lower() == 'true'  # Skip silent parts (30-50% faster)

@@ -121,7 +121,10 @@ class AdvancedFaceAnalyzer:
         
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
-        # Face detection
+        # Face detection - ensure detector exists (new MediaPipe API doesn't have it)
+        if self._face_detector is None:
+            return self._fallback_analyze(frame)
+            
         face_results = self._face_detector.process(rgb_frame)
         
         faces = []
