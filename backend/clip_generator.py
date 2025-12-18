@@ -1,6 +1,7 @@
 """
 Clip Generator Module
 Combines audio and video analysis to generate optimal clips
+Enhanced with Enterprise Features (Opus Clip / Vizard inspired)
 """
 import os
 import re
@@ -10,6 +11,23 @@ from typing import List, Dict, Tuple
 from collections import Counter
 import json
 from datetime import timedelta
+
+# Enterprise Features Import
+try:
+    from enterprise_features import (
+        EnhancedViralityScorer,
+        SmartAutoReframe,
+        AnimatedCaptionGenerator,
+        FillerWordRemover,
+        EngagementPredictor,
+        CaptionStyle,
+        get_enterprise_analyzer
+    )
+    ENTERPRISE_FEATURES_AVAILABLE = True
+    print("   ✅ Enterprise Features loaded (Opus/Vizard-style)")
+except ImportError as e:
+    ENTERPRISE_FEATURES_AVAILABLE = False
+    print(f"   ⚠️ Enterprise Features not available: {e}")
 
 
 class TimotyHookGenerator:
@@ -193,6 +211,17 @@ class ClipGenerator:
         self.config = config
         self.clips = []
         self.hook_generator = TimotyHookGenerator()
+        
+        # Initialize Enterprise Features
+        self.enterprise_enabled = ENTERPRISE_FEATURES_AVAILABLE
+        if self.enterprise_enabled:
+            language = getattr(config, 'WHISPER_LANGUAGE', 'id')
+            self.virality_scorer = EnhancedViralityScorer(language)
+            self.auto_reframe = SmartAutoReframe()
+            self.caption_generator = AnimatedCaptionGenerator(CaptionStyle.HORMOZI)
+            self.filler_remover = FillerWordRemover(language)
+            self.engagement_predictor = EngagementPredictor()
+            print("   🚀 Enterprise Mode: Enhanced Virality + Auto-Reframe + Animated Captions")
         
         # Set resolution from preset or use default
         self.resolution = resolution or getattr(config, 'DEFAULT_RESOLUTION', '1080p')
@@ -1912,6 +1941,22 @@ class ClipGenerator:
             elif semantic_validation['confidence'] > 0.7:
                 viral_score += 0.05  # Small bonus for high confidence context
             
+            # ENTERPRISE: Enhanced Virality Metrics
+            enterprise_metrics = None
+            engagement_prediction = None
+            if self.enterprise_enabled:
+                enterprise_metrics = self.virality_scorer.calculate_comprehensive_score(segment)
+                # Blend enterprise score with existing score
+                enterprise_boost = enterprise_metrics.overall_score * 0.3  # 30% weight
+                viral_score = (viral_score * 0.7) + enterprise_boost
+                
+                # Get engagement prediction
+                engagement_prediction = self.engagement_predictor.predict_engagement(
+                    enterprise_metrics,
+                    segment.get('duration', 30),
+                    platform='tiktok'
+                )
+            
             scored.append({
                 **segment,
                 'viral_score': min(1.0, max(0.0, viral_score)),
@@ -1920,7 +1965,9 @@ class ClipGenerator:
                 'narrative_context': narrative_context,
                 'content_type': content_type,
                 'creator_style': creator_style,
-                'semantic_context': semantic_validation
+                'semantic_context': semantic_validation,
+                'enterprise_metrics': enterprise_metrics,
+                'engagement_prediction': engagement_prediction
             })
         
         # Sort by viral score
@@ -1944,6 +1991,15 @@ class ClipGenerator:
             top3_iq = [s.get('narrative_context', {}).get('iq_quality', 0) for s in scored[:3]]
             top3_eq = [s.get('narrative_context', {}).get('eq_quality', 0) for s in scored[:3]]
             print(f"   ⭐ Top 3 clips - IQ: {[f'{x:.0%}' for x in top3_iq]} | EQ: {[f'{x:.0%}' for x in top3_eq]}")
+        
+        # ENTERPRISE: Log enhanced metrics summary
+        if self.enterprise_enabled and scored:
+            enterprise_scores = [s.get('enterprise_metrics') for s in scored if s.get('enterprise_metrics')]
+            if enterprise_scores:
+                avg_hook = sum(m.hook_strength for m in enterprise_scores) / len(enterprise_scores)
+                avg_engage = sum(m.engagement_velocity for m in enterprise_scores) / len(enterprise_scores)
+                viral_potential_clips = sum(1 for s in scored if s.get('engagement_prediction', {}).get('view_potential_score', 0) >= 70)
+                print(f"   🚀 ENTERPRISE: Avg Hook Strength {avg_hook:.0%} | Avg Engagement {avg_engage:.0%} | Viral Potential: {viral_potential_clips}/{len(scored)}")
         
         return scored
     
@@ -2414,6 +2470,30 @@ class ClipGenerator:
                 'category': segment['category'],
                 'transcript': segment['text'][:200] + '...' if len(segment['text']) > 200 else segment['text']
             }
+            
+            # ENTERPRISE: Add enhanced metrics
+            if segment.get('enterprise_metrics'):
+                em = segment['enterprise_metrics']
+                clip_payload['enterprise_analytics'] = {
+                    'hook_strength': round(em.hook_strength * 100),
+                    'emotional_arc': round(em.emotional_arc * 100),
+                    'speech_pacing': round(em.speech_pacing * 100),
+                    'retention_prediction': round(em.retention_prediction * 100),
+                    'trend_alignment': round(em.trend_alignment * 100),
+                    'shareability': round(em.shareability * 100),
+                    'overall_enterprise_score': round(em.overall_score * 100)
+                }
+            
+            if segment.get('engagement_prediction'):
+                ep = segment['engagement_prediction']
+                clip_payload['engagement_forecast'] = {
+                    'view_potential': ep.get('view_potential_score', 0),
+                    'engagement_rate': ep.get('predicted_engagement_rate', 0),
+                    'share_likelihood': ep.get('share_likelihood', 0),
+                    'confidence': ep.get('confidence', 'low'),
+                    'optimal_posting_times': ep.get('optimal_posting_times', []),
+                    'recommendation': ep.get('recommendation', '')
+                }
 
             if hook_mode == 'timoty':
                 hook_detail = self.hook_generator.generate(segment)
