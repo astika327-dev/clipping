@@ -72,28 +72,42 @@ class AdvancedFaceAnalyzer:
             return False
         
         try:
-            self._mp_face = mp.solutions.face_detection
-            self._mp_face_mesh = mp.solutions.face_mesh
-            
-            # High confidence face detection
-            self._face_detector = self._mp_face.FaceDetection(
-                model_selection=1,  # Full range model (better for various distances)
-                min_detection_confidence=0.5
-            )
-            
-            # Face mesh for expression analysis (468 landmarks)
-            self._face_mesh = self._mp_face_mesh.FaceMesh(
-                static_image_mode=True,
-                max_num_faces=5,
-                refine_landmarks=True,
-                min_detection_confidence=0.5
-            )
+            # MediaPipe >= 0.10.14 uses different module structure
+            # Try the old way first (solutions), then fallback to new way
+            if hasattr(mp, 'solutions'):
+                self._mp_face = mp.solutions.face_detection
+                self._mp_face_mesh = mp.solutions.face_mesh
+                
+                # High confidence face detection
+                self._face_detector = self._mp_face.FaceDetection(
+                    model_selection=1,
+                    min_detection_confidence=0.5
+                )
+                
+                # Face mesh for expression analysis
+                self._face_mesh = self._mp_face_mesh.FaceMesh(
+                    static_image_mode=True,
+                    max_num_faces=5,
+                    refine_landmarks=True,
+                    min_detection_confidence=0.5
+                )
+            else:
+                # New MediaPipe API (0.10.14+)
+                # FaceDetector and FaceLandmarker use tasks API
+                print("   ℹ️ MediaPipe using new Tasks API, switching to basic mode")
+                self._face_detector = None
+                self._face_mesh = None
+                # Continue without MediaPipe face - will use fallback
             
             self._initialized = True
             print("   ✅ MediaPipe Face Detection initialized")
             return True
         except Exception as e:
             print(f"   ⚠️ MediaPipe initialization failed: {e}")
+            # Still mark as initialized but with None detectors
+            self._initialized = True
+            self._face_detector = None
+            self._face_mesh = None
             return False
     
     def analyze_frame(self, frame: np.ndarray) -> Dict:

@@ -308,12 +308,26 @@ class VideoAnalyzer:
             samples_per_scene = 5
         
         # For very many scenes, analyze only a subset
+        # IMPROVED: Filter out very short scenes and prefer longer ones
         max_scenes_to_analyze = min(total_scenes, 50)
+        
         if total_scenes > max_scenes_to_analyze:
-            print(f"   ⚡ Many scenes ({total_scenes}). Sampling {max_scenes_to_analyze} for analysis.")
-            # Sample evenly across the video
-            step = total_scenes / max_scenes_to_analyze
-            scenes_to_analyze = [scenes[int(i * step)] for i in range(max_scenes_to_analyze)]
+            print(f"   ⚡ Many scenes ({total_scenes}). Filtering and sampling for analysis...")
+            
+            # First, filter to only scenes >= 5 seconds (meaningful for clips)
+            valid_scenes = [s for s in scenes if (
+                (s[1] - s[0] if isinstance(s, tuple) else s['end_time'] - s['start_time']) >= 5.0
+            )]
+            
+            if len(valid_scenes) < 10:
+                # Not enough long scenes, use all
+                valid_scenes = scenes
+            
+            # Sample evenly across the video from valid scenes
+            step = max(1, len(valid_scenes) // max_scenes_to_analyze)
+            scenes_to_analyze = valid_scenes[::step][:max_scenes_to_analyze]
+            
+            print(f"   📊 Selected {len(scenes_to_analyze)} meaningful scenes (filtered {total_scenes - len(valid_scenes)} short scenes)")
         else:
             scenes_to_analyze = scenes
         
