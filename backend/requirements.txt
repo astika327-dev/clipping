@@ -23,9 +23,8 @@ httpx>=0.27.0
 # YOLOv8 works with Python 3.8-3.13
 ultralytics>=8.1.0
 # MediaPipe requires Python 3.8-3.12 (NOT 3.13+)
-# Install if using Python 3.12 or lower:
-# mediapipe>=0.10.9
-# fer>=22.5.1
+mediapipe>=0.10.9
+fer>=22.5.1
 
 # AWS Cloud Deployment
 boto3>=1.34.0
