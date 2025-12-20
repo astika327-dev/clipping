@@ -29,6 +29,15 @@ except ImportError as e:
     ENTERPRISE_FEATURES_AVAILABLE = False
     print(f"   ⚠️ Enterprise Features not available: {e}")
 
+# LLM Intelligence Import
+try:
+    from llm_intelligence import LLMIntelligence, get_llm_intelligence
+    LLM_INTELLIGENCE_AVAILABLE = True
+    print("   ✅ LLM Intelligence loaded (AI-powered clip analysis)")
+except ImportError as e:
+    LLM_INTELLIGENCE_AVAILABLE = False
+    print(f"   ⚠️ LLM Intelligence not available: {e}")
+
 
 class TimotyHookGenerator:
     """Generate punchy hook lines inspired by Timoty Ronald's delivery."""
@@ -222,6 +231,20 @@ class ClipGenerator:
             self.filler_remover = FillerWordRemover(language)
             self.engagement_predictor = EngagementPredictor()
             print("   🚀 Enterprise Mode: Enhanced Virality + Auto-Reframe + Animated Captions")
+        
+        # Initialize LLM Intelligence
+        self.llm_enabled = LLM_INTELLIGENCE_AVAILABLE
+        self.llm_intelligence = None
+        if self.llm_enabled:
+            try:
+                self.llm_intelligence = get_llm_intelligence(config)
+                if self.llm_intelligence.available:
+                    print("   🧠 LLM Intelligence Mode: AI-powered clip analysis enabled")
+                else:
+                    print("   ⚠️ LLM Intelligence: Running in fallback mode (no API key)")
+            except Exception as e:
+                print(f"   ⚠️ LLM Intelligence initialization failed: {e}")
+                self.llm_enabled = False
         
         # Set resolution from preset or use default
         self.resolution = resolution or getattr(config, 'DEFAULT_RESOLUTION', '1080p')
@@ -2446,8 +2469,38 @@ class ClipGenerator:
     def _create_clip_metadata(self, segments: List[Dict], hook_mode: str = None) -> List[Dict]:
         """
         Create metadata for each clip
+        Enhanced with LLM Intelligence for smarter clip analysis
         """
         clips = []
+        
+        # LLM Intelligence Analysis (if enabled)
+        llm_analyses = {}
+        if self.llm_enabled and self.llm_intelligence:
+            print("\n🧠 Running LLM Intelligence analysis on clips...")
+            for idx, segment in enumerate(segments):
+                try:
+                    transcript = segment.get('text', '')
+                    duration = segment.get('duration', 0)
+                    has_faces = segment.get('visual', {}).get('has_faces', True)
+                    original_hook = ''
+                    
+                    # Get hook from hook generator if available
+                    if hook_mode == 'timoty':
+                        hook_detail = self.hook_generator.generate(segment)
+                        if hook_detail:
+                            original_hook = hook_detail.get('text', '')
+                    
+                    # Run LLM analysis
+                    intelligence = self.llm_intelligence.analyze_clip_full(
+                        transcript=transcript,
+                        duration=duration,
+                        has_faces=has_faces,
+                        original_hook=original_hook
+                    )
+                    llm_analyses[idx] = intelligence
+                    print(f"   📊 Clip {idx + 1}: Quality={intelligence.quality_level}, Trends={len(intelligence.matching_trends)}")
+                except Exception as e:
+                    print(f"   ⚠️ LLM analysis failed for clip {idx + 1}: {e}")
         
         for idx, segment in enumerate(segments):
             # Generate title
@@ -2474,6 +2527,57 @@ class ClipGenerator:
                 'category': segment['category'],
                 'transcript': segment['text'][:200] + '...' if len(segment['text']) > 200 else segment['text']
             }
+            
+            # LLM INTELLIGENCE: Add AI-powered insights
+            if idx in llm_analyses:
+                intel = llm_analyses[idx]
+                
+                # Override title with AI-generated viral title if available
+                if intel.recommended_title:
+                    clip_payload['ai_title'] = intel.recommended_title
+                    clip_payload['title_alternatives'] = intel.viral_titles[:3] if intel.viral_titles else []
+                
+                # Add AI analysis data
+                clip_payload['ai_intelligence'] = {
+                    # Context validation
+                    'context_complete': intel.is_context_complete,
+                    'context_score': round(intel.context_score * 100),
+                    'context_issues': intel.context_issues,
+                    
+                    # Content analysis
+                    'summary': intel.summary,
+                    'key_points': intel.key_points,
+                    'content_type': intel.content_type,
+                    
+                    # Quality assessment
+                    'quality_score': round(intel.quality_score),
+                    'quality_level': intel.quality_level,
+                    'quality_feedback': intel.quality_feedback,
+                    
+                    # Trend matching
+                    'matching_trends': intel.matching_trends,
+                    'trend_score': round(intel.trend_score * 100),
+                    
+                    # Hook enhancement
+                    'enhanced_hooks': intel.enhanced_hooks[:2] if intel.enhanced_hooks else [],
+                    'recommended_hook': intel.recommended_hook,
+                }
+                
+                # Social media ready captions
+                clip_payload['social_captions'] = {
+                    'tiktok': intel.tiktok_caption,
+                    'instagram': intel.instagram_caption,
+                    'youtube_shorts': intel.youtube_shorts_title,
+                    'hashtags': intel.recommended_hashtags[:10] if intel.recommended_hashtags else []
+                }
+                
+                # Adjust viral score based on AI quality assessment
+                if intel.quality_score > 0:
+                    original_score = segment['viral_score']
+                    ai_score = intel.quality_score / 100
+                    blended_score = (original_score * 0.6) + (ai_score * 0.4)
+                    clip_payload['viral_score_numeric'] = round(blended_score, 2)
+                    clip_payload['ai_quality_boost'] = round((ai_score - original_score) * 100)
             
             # ENTERPRISE: Add enhanced metrics
             if segment.get('enterprise_metrics'):
@@ -2504,6 +2608,9 @@ class ClipGenerator:
                 if hook_detail:
                     clip_payload['timoty_hook'] = hook_detail
             clips.append(clip_payload)
+        
+        if llm_analyses:
+            print(f"   ✅ LLM Intelligence analysis complete for {len(llm_analyses)} clips")
         
         return clips
 
