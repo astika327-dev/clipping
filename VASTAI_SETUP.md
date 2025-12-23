@@ -90,13 +90,12 @@ cd backend
 pip install -r requirements.txt
 ```
 
-### Jika ada error dengan PyTorch/CUDA:
+> ⚠️ **Note:** Vast.ai instances sudah pre-installed dengan PyTorch + CUDA. **TIDAK perlu install PyTorch lagi!**
+
+### Jika ada error dengan PyTorch/CUDA (jarang terjadi):
 
 ```bash
-# Install PyTorch dengan CUDA support (sesuaikan dengan versi CUDA server)
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-
-# Atau untuk CUDA 12.1:
+# Hanya jika PyTorch tidak terdeteksi (sangat jarang di Vast.ai)
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
 
@@ -136,7 +135,8 @@ Instance Vast.ai biasanya sudah menyertakan CUDA + cuDNN, tetapi beberapa image 
 ```bash
 # Download cuDNN 9.1 untuk CUDA 12.1
 cd /tmp
-wget https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/linux-x86_64/cudnn-linux-x86_64-9.1.0.70_cuda12.1-archive.tar.xz
+
+
 
 # Ekstrak dan copy ke lokasi CUDA default
 tar -xJf cudnn-linux-x86_64-9.1.0.70_cuda12.1-archive.tar.xz

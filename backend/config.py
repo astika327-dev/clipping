@@ -355,31 +355,36 @@ class Config:
         'tanggung jawab', 'bangun', 'disiplin'
     ]
     
-    # Video export settings - OPTIMIZED FOR GPU (NVIDIA CUDA / RTX 3060)
-    VIDEO_CODEC = 'h264_nvenc'  # NVIDIA GPU encoder (faster than libx264)
+    # Video export settings - Configurable via environment
+    # Default: GPU encoding if available, falls back to CPU
+    VIDEO_CODEC = os.environ.get('VIDEO_CODEC', 'h264_nvenc')  # 'h264_nvenc' for GPU, 'libx264' for CPU
     # ALTERNATIVE: 'hevc_nvenc' for better compression (smaller file size, same quality)
-    # VIDEO_CODEC = 'hevc_nvenc'  # H.265 HEVC - use if you want better compression
     AUDIO_CODEC = 'aac'
     VIDEO_BITRATE = '1M'  # Lower bitrate for smaller file size
     AUDIO_BITRATE = '192k'  # Better audio quality
     OUTPUT_FORMAT = 'mp4'
     
-    # GPU Acceleration settings - ADVANCED
-    USE_GPU_ACCELERATION = True
-    GPU_DEVICE = 0  # Default GPU device (0 for first GPU)
-    NVENC_PRESET = 'medium'  # Options: slow, medium, fast (slow=best quality, fast=speed)
+    # GPU Acceleration settings - Configurable via environment
+    # Set USE_GPU_ACCELERATION=false in .env if FFmpeg NVENC doesn't work
+    USE_GPU_ACCELERATION = os.environ.get('USE_GPU_ACCELERATION', 'true').lower() == 'true'
+    GPU_DEVICE = int(os.environ.get('GPU_DEVICE', 0))  # Default GPU device (0 for first GPU)
+    NVENC_PRESET = os.environ.get('NVENC_PRESET', 'medium')  # Options: slow, medium, fast
     NVENC_RC_MODE = 'vbr'  # Rate control: vbr (variable), cbr (constant), cqp (fixed QP)
     NVENC_QUALITY = 25  # Quality (0=best, 51=worst) for CQP mode
-    HWACCEL_DECODER = 'cuda'  # Hardware-accelerated decoding (NVIDIA CUDA)
+    HWACCEL_DECODER = os.environ.get('HWACCEL_DECODER', 'cuda')  # Hardware-accelerated decoding
     HWACCEL_OUTPUT_FORMAT = 'cuda'  # Keep frames on GPU to reduce memory transfers
+    
+    # CPU Encoding settings (used when GPU not available)
+    FFMPEG_THREADS = int(os.environ.get('FFMPEG_THREADS', 8))  # Number of threads for CPU encoding
+    CPU_PRESET = os.environ.get('CPU_PRESET', 'fast')  # libx264 preset: ultrafast, fast, medium, slow
     
     # GPU Filter Processing - Use CUDA filters for speed
     USE_GPU_FILTERS = False  # Disable GPU filters due to compatibility issues, use CPU filters instead
     SCALE_FILTER = 'scale'  # Use CPU-based scale (compatible with all codecs)
     
-    # Batch processing for better GPU utilization
+    # Batch processing for parallel clip export
     ENABLE_BATCH_EXPORT = True  # Process multiple clips in parallel
-    MAX_PARALLEL_EXPORTS = 2  # RTX 3060: max 2 concurrent exports (adjust based on VRAM)
+    MAX_PARALLEL_EXPORTS = int(os.environ.get('MAX_PARALLEL_EXPORTS', 2))  # Concurrent exports
     
     # Aspect ratio settings (16:9 for viral content)
     TARGET_ASPECT_RATIO = '16:9'

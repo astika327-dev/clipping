@@ -261,7 +261,7 @@ echo "=== Setup Complete ==="
         --key-name $KeyPairName `
         --security-group-ids $sgId `
         --user-data $userDataBase64 `
-        --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":100,"VolumeType":"gp3"}}]' `
+        --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":50,"VolumeType":"gp3"}}]' `
         --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=AI-Video-Clipper}]" `
         --region $Region `
         --query "Instances[0].InstanceId" `

@@ -2773,6 +2773,7 @@ class ClipGenerator:
     def _export_clip_cpu_fallback(self, clip: Dict, output_dir: str) -> str:
         """
         Fallback CPU-based export if GPU fails
+        Optimized with multi-threading for fast encoding on multi-core systems
         """
         output_path = os.path.join(output_dir, clip['filename'])
         
@@ -2782,17 +2783,28 @@ class ClipGenerator:
         ]
         composite_filter = ','.join(video_filters)
         
+        # Get thread count from config/env (default 8 for multi-core systems)
+        threads = getattr(self.config, 'FFMPEG_THREADS', int(os.environ.get('FFMPEG_THREADS', 8)))
+        
         cmd = [
             'ffmpeg',
+            '-hide_banner',
+            '-loglevel', 'warning',
+            '-threads', str(threads),  # Multi-threading for decoding
             '-i', self.video_path,
             '-ss', str(clip['start_seconds']),
             '-t', str(clip['duration']),
             '-vf', composite_filter,
             '-c:v', 'libx264',
+            '-threads', str(threads),  # Multi-threading for encoding
+            '-preset', 'fast',  # Use 'fast' preset for speed (good balance)
+            '-crf', '23',  # Constant quality mode (better than bitrate for quality)
             '-b:v', self.target_bitrate,
+            '-maxrate', self.target_bitrate,
+            '-bufsize', f"{int(int(self.target_bitrate.rstrip('M')) * 2)}M",
             '-c:a', self.config.AUDIO_CODEC,
             '-b:a', self.config.AUDIO_BITRATE,
-            '-preset', 'medium',
+            '-movflags', '+faststart',  # Optimize for streaming
             '-y',
             output_path
         ]
@@ -2802,6 +2814,8 @@ class ClipGenerator:
             return output_path
         except subprocess.CalledProcessError as e:
             print(f"❌ CPU fallback also failed: {e}")
+            if e.stderr:
+                print(f"   FFmpeg error: {e.stderr[:300]}")
             return None
     
     def export_all_clips(self, clips: List[Dict], output_dir: str) -> List[str]:
