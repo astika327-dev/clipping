@@ -358,6 +358,6 @@ Frontend memiliki ResourceMonitor component yang menampilkan:
 **🎉 Selamat! Aplikasi sudah siap digunakan.**
 
 Jika ada masalah, cek section Troubleshooting atau buka issue di repository.
-
 touch ~/.no_auto_tmux
+
 exit

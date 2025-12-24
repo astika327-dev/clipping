@@ -1,0 +1,10 @@
+[
+  {
+    "DeviceName": "/dev/sda1",
+    "Ebs": {
+      "VolumeSize": 50,
+      "DeleteOnTermination": true,
+      "VolumeType": "gp3"
+    }
+  }
+]

@@ -98,16 +98,25 @@ function VideoUploader({ onVideoUploaded }) {
   }
 
   return (
-    <div className="card">
-      <h2 className="text-2xl font-bold mb-6">Upload Video</h2>
+    <div className="card animate-slide-up">
+      <div className="flex items-center gap-3 mb-8">
+        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center text-2xl">
+          📤
+        </div>
+        <div>
+          <h2 className="text-2xl font-bold text-white">Upload Video</h2>
+          <p className="text-white/50 text-sm">Drag & drop atau pilih file video</p>
+        </div>
+      </div>
       
       <div
         className={`
-          relative border-2 border-dashed rounded-xl p-12 text-center
-          transition-all duration-300
+          relative rounded-2xl p-12 text-center
+          transition-all duration-500 ease-out
+          border-2 border-dashed
           ${isDragging 
-            ? 'border-primary-400 bg-primary-500/10' 
-            : 'border-white/30 hover:border-white/50'
+            ? 'border-primary-400 bg-primary-500/10 scale-[1.02]' 
+            : 'border-white/10 hover:border-primary-500/50 hover:bg-white/[0.02]'
           }
           ${(uploading || downloading) ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
         `}
@@ -116,6 +125,11 @@ function VideoUploader({ onVideoUploaded }) {
         onDrop={handleDrop}
         onClick={() => fileInputRef.current?.click()}
       >
+        {/* Glow effect on drag */}
+        {isDragging && (
+          <div className="absolute inset-0 rounded-2xl bg-gradient-to-r from-primary-500/20 to-accent-500/20 blur-xl" />
+        )}
+        
         <input
           ref={fileInputRef}
           type="file"
@@ -125,21 +139,39 @@ function VideoUploader({ onVideoUploaded }) {
         />
 
         {uploading ? (
-          <div className="space-y-4">
-            <div className="w-16 h-16 mx-auto border-4 border-primary-500 border-t-transparent rounded-full animate-spin"></div>
-            <p className="text-lg font-medium">Uploading video...</p>
+          <div className="space-y-6 relative">
+            <div className="relative w-20 h-20 mx-auto">
+              <div className="absolute inset-0 border-4 border-primary-500/20 rounded-full" />
+              <div className="absolute inset-0 border-4 border-primary-500 border-t-transparent rounded-full animate-spin" />
+              <div className="absolute inset-2 border-4 border-accent-500 border-b-transparent rounded-full animate-spin" style={{ animationDirection: 'reverse' }} />
+            </div>
+            <div>
+              <p className="text-xl font-semibold text-white">Uploading video...</p>
+              <p className="text-white/50 text-sm mt-1">Mohon tunggu sebentar</p>
+            </div>
           </div>
         ) : (
-          <div className="space-y-4">
-            <div className="text-6xl">📹</div>
+          <div className="space-y-6 relative">
+            <div className="w-24 h-24 mx-auto rounded-2xl bg-gradient-to-br from-primary-500/10 to-accent-500/10 border border-white/10 flex items-center justify-center animate-float">
+              <span className="text-5xl">🎬</span>
+            </div>
             <div>
-              <p className="text-xl font-semibold mb-2">
-                Drag & drop video atau klik untuk pilih file
+              <p className="text-xl font-semibold text-white mb-2">
+                Drag & drop video di sini
               </p>
-              <p className="text-white/60 text-sm">
-                Format: MP4, MOV, AVI, MKV • Max: 2GB • Durasi: 60 menit
+              <p className="text-white/40 text-sm">
+                atau <span className="text-primary-400 hover:text-primary-300 transition-colors">klik untuk browse</span>
               </p>
             </div>
+            <div className="flex items-center justify-center gap-4 text-xs text-white/30">
+              <span className="px-3 py-1 rounded-full bg-white/5">MP4</span>
+              <span className="px-3 py-1 rounded-full bg-white/5">MOV</span>
+              <span className="px-3 py-1 rounded-full bg-white/5">AVI</span>
+              <span className="px-3 py-1 rounded-full bg-white/5">MKV</span>
+            </div>
+            <p className="text-white/30 text-xs">
+              Maksimal 2GB • Durasi hingga 60 menit
+            </p>
           </div>
         )}
       </div>
@@ -196,25 +228,31 @@ function VideoUploader({ onVideoUploaded }) {
         </p>
       </form>
 
-      <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-        <div className="card-hover text-center">
-          <div className="text-3xl mb-2">🎯</div>
-          <h3 className="font-semibold mb-1">Analisis Otomatis</h3>
-          <p className="text-white/60 text-xs">
+      <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="feature-card group">
+          <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-primary-500/20 to-primary-600/10 flex items-center justify-center text-2xl mb-4 group-hover:scale-110 transition-transform duration-300">
+            🎯
+          </div>
+          <h3 className="font-semibold text-white mb-2">Analisis Otomatis</h3>
+          <p className="text-white/50 text-sm leading-relaxed">
             AI menganalisis audio & visual untuk temukan momen terbaik
           </p>
         </div>
-        <div className="card-hover text-center">
-          <div className="text-3xl mb-2">✂️</div>
-          <h3 className="font-semibold mb-1">Potong Otomatis</h3>
-          <p className="text-white/60 text-xs">
+        <div className="feature-card group">
+          <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-accent-500/20 to-accent-600/10 flex items-center justify-center text-2xl mb-4 group-hover:scale-110 transition-transform duration-300">
+            ✂️
+          </div>
+          <h3 className="font-semibold text-white mb-2">Potong Otomatis</h3>
+          <p className="text-white/50 text-sm leading-relaxed">
             Generate klip 9-32 detik dengan hook kuat & ending nendang
           </p>
         </div>
-        <div className="card-hover text-center">
-          <div className="text-3xl mb-2">🚀</div>
-          <h3 className="font-semibold mb-1">Skor Viral</h3>
-          <p className="text-white/60 text-xs">
+        <div className="feature-card group">
+          <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-emerald-500/20 to-emerald-600/10 flex items-center justify-center text-2xl mb-4 group-hover:scale-110 transition-transform duration-300">
+            🚀
+          </div>
+          <h3 className="font-semibold text-white mb-2">Skor Viral</h3>
+          <p className="text-white/50 text-sm leading-relaxed">
             Setiap klip diberi skor potensi viral berdasarkan konten
           </p>
         </div>

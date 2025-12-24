@@ -78,23 +78,52 @@ function App() {
   }, [uiStep, clips.length])
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800">
+    <div className="min-h-screen bg-premium">
+      {/* Ambient background effects */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-[-20%] left-[-10%] w-[500px] h-[500px] bg-primary-500/10 rounded-full blur-[120px] animate-pulse-slow" />
+        <div className="absolute bottom-[-20%] right-[-10%] w-[600px] h-[600px] bg-accent-500/10 rounded-full blur-[150px] animate-pulse-slow" style={{ animationDelay: '1s' }} />
+      </div>
+
       {/* Navbar */}
       <Navbar currentPage={currentPage} onPageChange={handlePageChange} />
 
       {/* Main Content */}
-      <div className="py-8 px-4">
+      <div className="relative py-12 px-4">
         <div className="max-w-7xl mx-auto">
           {currentPage === 'home' && (
             <>
-              {/* Header */}
-              <header className="text-center mb-12">
-                <h1 className="text-5xl font-bold mb-4 bg-gradient-to-r from-primary-400 to-accent-400 bg-clip-text text-transparent">
-                  🎬 AI Video Clipper
+              {/* Premium Header */}
+              <header className="text-center mb-16 animate-fade-in">
+                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full glass mb-6">
+                  <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+                  <span className="text-sm text-white/70">Powered by Deep Learning AI</span>
+                </div>
+                <h1 className="text-6xl md:text-7xl font-bold mb-6 font-display tracking-tight">
+                  <span className="text-gradient">AI Video</span>
+                  <br />
+                  <span className="text-white">Clipper</span>
+                  <span className="inline-block ml-3 animate-float">🎬</span>
                 </h1>
-                <p className="text-xl text-white/70">
-                  Otomatis potong video panjang jadi klip pendek viral untuk TikTok, Reels & Shorts
+                <p className="text-xl md:text-2xl text-white/60 max-w-2xl mx-auto leading-relaxed">
+                  Otomatis potong video panjang jadi klip pendek 
+                  <span className="text-gradient font-semibold"> viral </span>
+                  untuk TikTok, Reels & Shorts
                 </p>
+                <div className="flex items-center justify-center gap-6 mt-8 text-white/40 text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">⚡</span>
+                    <span>Proses Cepat</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">🎯</span>
+                    <span>AI Scoring</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">✨</span>
+                    <span>Auto Hook</span>
+                  </div>
+                </div>
               </header>
 
               {/* Main Content */}
@@ -196,9 +225,15 @@ function App() {
                 )}
               </div>
 
-              {/* Footer */}
-              <footer className="mt-16 text-center text-white/40 text-sm">
-                <p>Dibuat dengan ❤️ untuk content creators Indonesia</p>
+              {/* Premium Footer */}
+              <footer className="mt-20 pt-8 border-t border-white/5">
+                <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-white/30 text-sm">
+                  <p>Dibuat dengan <span className="text-red-400">❤️</span> untuk content creators Indonesia</p>
+                  <div className="flex items-center gap-4">
+                    <span className="badge-primary text-xs">v1.0</span>
+                    <span>© 2025 AI Video Clipper</span>
+                  </div>
+                </div>
               </footer>
             </>
           )}

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import axios from 'axios'
 
-const STATUS_POLL_INTERVAL = 3000
+const STATUS_POLL_INTERVAL = 2000
 
 function ProcessingStatus({ filename, jobId, settings, onComplete, onCancel }) {
   const [status, setStatus] = useState({
@@ -11,18 +11,35 @@ function ProcessingStatus({ filename, jobId, settings, onComplete, onCancel }) {
     clips: []
   })
   const [eventLog, setEventLog] = useState([])
-  const [hasStarted, setHasStarted] = useState(false)
   const pollRef = useRef(null)
+  const hasLaunchedRef = useRef(false)
+  const currentJobRef = useRef(null)
 
   const progressPercent = useMemo(() => {
     const value = Number(status.progress) || 0
     return Math.min(Math.max(Math.round(value), 0), 100)
   }, [status.progress])
 
+  // Reset saat jobId berubah (video baru diupload)
   useEffect(() => {
-    if (!filename || !jobId || hasStarted) return
+    if (jobId !== currentJobRef.current) {
+      currentJobRef.current = jobId
+      hasLaunchedRef.current = false
+      setStatus({
+        status: 'queued',
+        progress: 5,
+        message: 'Menyiapkan GPU & memori...',
+        clips: []
+      })
+      setEventLog([])
+    }
+  }, [jobId])
 
-    setHasStarted(true)
+  useEffect(() => {
+    if (!filename || !jobId) return
+    if (hasLaunchedRef.current) return
+
+    hasLaunchedRef.current = true
     launchProcessing()
     fetchStatus()
     pollRef.current = setInterval(fetchStatus, STATUS_POLL_INTERVAL)
@@ -30,7 +47,7 @@ function ProcessingStatus({ filename, jobId, settings, onComplete, onCancel }) {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current)
     }
-  }, [filename, jobId, hasStarted])
+  }, [filename, jobId])
 
   const launchProcessing = () => {
     axios
