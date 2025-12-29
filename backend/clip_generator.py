@@ -2810,12 +2810,26 @@ class ClipGenerator:
         ]
         
         try:
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-            return output_path
+            print(f"      🔧 CPU fallback command: ffmpeg -i ... -ss {clip['start_seconds']} -t {clip['duration']}")
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=300)
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+                print(f"      ✅ CPU fallback succeeded")
+                return output_path
+            else:
+                print(f"      ❌ CPU fallback: Output file invalid or too small")
+                return None
+        except subprocess.TimeoutExpired:
+            print(f"      ❌ CPU fallback TIMEOUT after 5 minutes")
+            return None
         except subprocess.CalledProcessError as e:
-            print(f"❌ CPU fallback also failed: {e}")
+            print(f"      ❌ CPU fallback FFmpeg error (exit code {e.returncode})")
             if e.stderr:
-                print(f"   FFmpeg error: {e.stderr[:300]}")
+                print(f"         Stderr: {e.stderr[:500]}")
+            if e.stdout:
+                print(f"         Stdout: {e.stdout[:200]}")
+            return None
+        except Exception as e:
+            print(f"      ❌ CPU fallback unexpected error: {type(e).__name__}: {str(e)[:200]}")
             return None
     
     def export_all_clips(self, clips: List[Dict], output_dir: str) -> List[str]:
@@ -2886,26 +2900,51 @@ class ClipGenerator:
         return exported
     
     def _export_sequential(self, clips: List[Dict], output_dir: str) -> List[str]:
-        """Sequential export (original method)"""
+        """Sequential export with detailed error tracking"""
         exported = []
+        failed = []  # Track failed clips with reasons
         delay = getattr(self.config, 'EXPORT_THROTTLE_SECONDS', 0)
         total = len(clips)
         
         for idx, clip in enumerate(clips):
-            print(f"  [{idx + 1}/{total}] Exporting: {clip['filename']}")
-            output_path = self.export_clip(clip, output_dir)
+            clip_name = clip.get('filename', f'clip_{idx+1}')
+            print(f"  [{idx + 1}/{total}] Exporting: {clip_name}")
+            print(f"      📍 Time: {clip.get('start_seconds', 0):.1f}s - {clip.get('end_seconds', 0):.1f}s ({clip.get('duration', 0):.1f}s)")
             
-            if output_path:
-                exported.append(output_path)
-                if clip.get('captions'):
-                    self._write_caption_file(clip, output_dir)
-                # Write hook file for each clip (if timoty_hook exists)
-                self._write_hook_file(clip, output_dir)
+            try:
+                output_path = self.export_clip(clip, output_dir)
+                
+                if output_path and os.path.exists(output_path):
+                    file_size = os.path.getsize(output_path)
+                    if file_size > 1000:  # At least 1KB
+                        exported.append(output_path)
+                        print(f"      ✅ Success ({file_size / 1024 / 1024:.2f} MB)")
+                        if clip.get('captions'):
+                            self._write_caption_file(clip, output_dir)
+                        self._write_hook_file(clip, output_dir)
+                    else:
+                        failed.append((clip_name, f"File too small: {file_size} bytes"))
+                        print(f"      ❌ Failed: File too small ({file_size} bytes)")
+                        if os.path.exists(output_path):
+                            os.remove(output_path)
+                else:
+                    failed.append((clip_name, "export_clip returned None or file not created"))
+                    print(f"      ❌ Failed: No output file created")
+            except Exception as e:
+                failed.append((clip_name, str(e)))
+                print(f"      ❌ Exception: {str(e)[:200]}")
             
             if delay and delay > 0 and idx < len(clips) - 1:
                 time.sleep(delay)
         
-        print(f"✅ Exported {len(exported)} clips successfully")
+        # Summary
+        print(f"\n📊 Export Summary:")
+        print(f"   ✅ Successful: {len(exported)}/{total}")
+        if failed:
+            print(f"   ❌ Failed: {len(failed)}/{total}")
+            for name, reason in failed:
+                print(f"      - {name}: {reason[:100]}")
+        
         return exported
 
     def _build_caption_entries(self, clip: Dict, segments: List[Dict]) -> List[Dict]:

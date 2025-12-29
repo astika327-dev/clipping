@@ -4,6 +4,7 @@ import axios from 'axios'
 function VideoUploader({ onVideoUploaded }) {
   const [isDragging, setIsDragging] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
   const [error, setError] = useState(null)
   const [youtubeUrl, setYoutubeUrl] = useState('')
   const [downloading, setDownloading] = useState(false)
@@ -39,6 +40,7 @@ function VideoUploader({ onVideoUploaded }) {
   const handleFileUpload = async (file) => {
     setError(null)
     setUploading(true)
+    setUploadProgress(0)
 
     try {
       const formData = new FormData()
@@ -50,6 +52,7 @@ function VideoUploader({ onVideoUploaded }) {
         },
         onUploadProgress: (progressEvent) => {
           const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+          setUploadProgress(percentCompleted)
           console.log(`Upload progress: ${percentCompleted}%`)
         }
       })
@@ -62,6 +65,7 @@ function VideoUploader({ onVideoUploaded }) {
       setError(err.response?.data?.error || 'Gagal upload video. Silakan coba lagi.')
     } finally {
       setUploading(false)
+      setUploadProgress(0)
     }
   }
 
@@ -143,11 +147,20 @@ function VideoUploader({ onVideoUploaded }) {
             <div className="relative w-20 h-20 mx-auto">
               <div className="absolute inset-0 border-4 border-primary-500/20 rounded-full" />
               <div className="absolute inset-0 border-4 border-primary-500 border-t-transparent rounded-full animate-spin" />
-              <div className="absolute inset-2 border-4 border-accent-500 border-b-transparent rounded-full animate-spin" style={{ animationDirection: 'reverse' }} />
+              <div className="absolute inset-2 flex items-center justify-center">
+                <span className="text-lg font-bold text-primary-400">{uploadProgress}%</span>
+              </div>
             </div>
             <div>
               <p className="text-xl font-semibold text-white">Uploading video...</p>
-              <p className="text-white/50 text-sm mt-1">Mohon tunggu sebentar</p>
+              <p className="text-white/50 text-sm mt-1">{uploadProgress}% selesai</p>
+            </div>
+            {/* Progress bar */}
+            <div className="w-full max-w-xs mx-auto bg-white/10 rounded-full h-2 overflow-hidden">
+              <div 
+                className="h-full bg-gradient-to-r from-primary-500 to-accent-500 transition-all duration-300"
+                style={{ width: `${uploadProgress}%` }}
+              />
             </div>
           </div>
         ) : (

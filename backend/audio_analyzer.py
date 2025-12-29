@@ -92,10 +92,48 @@ class AudioAnalyzer:
         # Analyze content
         content_analysis = self._analyze_content(transcript)
 
+        # Cleanup: Unload models to free memory
+        self._cleanup_models()
+        
         return {
             'transcript': transcript,
             'analysis': content_analysis
         }
+    
+    def _cleanup_models(self):
+        """Unload Whisper models to free memory after transcription."""
+        import gc
+        
+        freed_memory = False
+        
+        if self.model is not None:
+            print("   🧹 Unloading openai-whisper model...")
+            del self.model
+            self.model = None
+            freed_memory = True
+        
+        if self.faster_model is not None:
+            print("   🧹 Unloading faster-whisper model...")
+            del self.faster_model
+            self.faster_model = None
+            freed_memory = True
+        
+        if self.retry_model is not None:
+            print("   🧹 Unloading retry model...")
+            del self.retry_model
+            self.retry_model = None
+            freed_memory = True
+        
+        if freed_memory:
+            # Force garbage collection
+            gc.collect()
+            
+            # Clear CUDA cache if available
+            if torch is not None and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                print("   🧹 CUDA cache cleared")
+            
+            print("   ✅ Model memory freed")
     
     def _load_openai_whisper_model(self):
         """Load classic openai/whisper model."""

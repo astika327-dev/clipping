@@ -384,7 +384,10 @@ class Config:
     
     # Batch processing for parallel clip export
     ENABLE_BATCH_EXPORT = True  # Process multiple clips in parallel
-    MAX_PARALLEL_EXPORTS = int(os.environ.get('MAX_PARALLEL_EXPORTS', 2))  # Concurrent exports
+    # Auto-detect optimal parallel exports based on CPU cores
+    import multiprocessing
+    _cpu_count = multiprocessing.cpu_count()
+    MAX_PARALLEL_EXPORTS = int(os.environ.get('MAX_PARALLEL_EXPORTS', min(4, max(2, _cpu_count // 2))))  # Use half of CPU cores, min 2, max 4
     
     # Aspect ratio settings (16:9 for viral content)
     TARGET_ASPECT_RATIO = '16:9'
