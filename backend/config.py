@@ -1,5 +1,16 @@
 """
 Configuration file for AI Video Clipper
+
+OPTIMIZED FOR AWS g4dn / NVIDIA T4 GPU INSTANCES
+- Auto-detects GPU and applies optimal settings
+- Uses Whisper large-v3 with CUDA acceleration
+- NVENC encoding for 6-10x faster video export
+- Parallel processing for maximum throughput
+
+GPU Requirements:
+- NVIDIA GPU with CUDA 11.8+ support
+- Minimum 8GB VRAM (16GB recommended for T4)
+- FFmpeg compiled with NVENC support
 """
 import os
 import shutil
@@ -52,18 +63,26 @@ class Config:
     YTDLP_COOKIES_FILE = os.path.expanduser(_env_cookie_file) if _env_cookie_file else (_default_cookie_file if os.path.exists(_default_cookie_file) else '')
     YTDLP_COOKIES_FROM_BROWSER = os.environ.get('YTDLP_COOKIES_FROM_BROWSER', '').strip()
     
-    # Transcription settings - OPTIMIZED FOR SPEED
+    # Transcription settings - FULLY OPTIMIZED FOR GPU (AWS g4dn / NVIDIA T4)
     TRANSCRIPTION_BACKEND = os.environ.get('TRANSCRIPTION_BACKEND', 'faster-whisper')
-    WHISPER_MODEL = os.environ.get('WHISPER_MODEL', 'large')  # tiny, base, small, medium, large, large-v3
-    WHISPER_FALLBACK_MODEL = os.environ.get('WHISPER_FALLBACK_MODEL', 'base')
+    WHISPER_MODEL = os.environ.get('WHISPER_MODEL', 'large-v3')  # Best model: large-v3
+    WHISPER_FALLBACK_MODEL = os.environ.get('WHISPER_FALLBACK_MODEL', 'medium')  # Better fallback
     WHISPER_LANGUAGE = os.environ.get('WHISPER_LANGUAGE', 'id')  # Default: Indonesian
-    FASTER_WHISPER_MODEL = os.environ.get('FASTER_WHISPER_MODEL', 'large')
-    FASTER_WHISPER_FALLBACK_MODEL = os.environ.get('FASTER_WHISPER_FALLBACK_MODEL', 'base')
-    FASTER_WHISPER_DEVICE = os.environ.get('FASTER_WHISPER_DEVICE', 'cpu')  # Use CPU for stability (set 'cuda' if GPU works)
-    FASTER_WHISPER_COMPUTE_TYPE = os.environ.get('FASTER_WHISPER_COMPUTE_TYPE', 'int8')  # 'int8' for CPU, 'float16' for GPU
-    FASTER_WHISPER_BEAM_SIZE = int(os.environ.get('FASTER_WHISPER_BEAM_SIZE', 1))  # Lower = faster
+    
+    # Faster-Whisper: OPTIMAL GPU SETTINGS for NVIDIA T4 (16GB VRAM)
+    FASTER_WHISPER_MODEL = os.environ.get('FASTER_WHISPER_MODEL', 'large-v3')  # Best accuracy
+    FASTER_WHISPER_FALLBACK_MODEL = os.environ.get('FASTER_WHISPER_FALLBACK_MODEL', 'medium')
+    FASTER_WHISPER_DEVICE = os.environ.get('FASTER_WHISPER_DEVICE', 'cuda')  # GPU acceleration
+    FASTER_WHISPER_COMPUTE_TYPE = os.environ.get('FASTER_WHISPER_COMPUTE_TYPE', 'float16')  # Optimal for GPU
+    FASTER_WHISPER_BEAM_SIZE = int(os.environ.get('FASTER_WHISPER_BEAM_SIZE', 5))  # Higher = more accurate
     FASTER_WHISPER_CHUNK_LENGTH = int(os.environ.get('FASTER_WHISPER_CHUNK_LENGTH', 30))
-    FASTER_WHISPER_VAD_FILTER = os.environ.get('FASTER_WHISPER_VAD_FILTER', 'true').lower() == 'true'  # Skip silent parts (30-50% faster)
+    FASTER_WHISPER_VAD_FILTER = os.environ.get('FASTER_WHISPER_VAD_FILTER', 'true').lower() == 'true'  # Skip silent parts
+    
+    # Faster-Whisper advanced settings for optimal accuracy
+    FASTER_WHISPER_TEMPERATURE = float(os.environ.get('FASTER_WHISPER_TEMPERATURE', 0.0))  # Deterministic output
+    FASTER_WHISPER_BEST_OF = int(os.environ.get('FASTER_WHISPER_BEST_OF', 5))  # Multiple samples for best result
+    FASTER_WHISPER_PATIENCE = float(os.environ.get('FASTER_WHISPER_PATIENCE', 1.0))  # Beam search patience
+    FASTER_WHISPER_CONDITION_ON_PREV = os.environ.get('FASTER_WHISPER_CONDITION_ON_PREV', 'true').lower() == 'true'
     
     # === HYBRID TRANSCRIPTION SYSTEM ===
     # Enable hybrid transcription for improved accuracy
@@ -355,53 +374,78 @@ class Config:
         'tanggung jawab', 'bangun', 'disiplin'
     ]
     
-    # Video export settings - Configurable via environment
-    # Default: GPU encoding if available, falls back to CPU
+    # Video export settings - FULLY OPTIMIZED FOR GPU (AWS g4dn / NVIDIA T4)
+    # Default: GPU NVENC encoding for maximum speed
     VIDEO_CODEC = os.environ.get('VIDEO_CODEC', 'h264_nvenc')  # 'h264_nvenc' for GPU, 'libx264' for CPU
-    # ALTERNATIVE: 'hevc_nvenc' for better compression (smaller file size, same quality)
+    # ALTERNATIVE: 'hevc_nvenc' for 40% smaller files with same quality
     AUDIO_CODEC = 'aac'
-    VIDEO_BITRATE = '1M'  # Lower bitrate for smaller file size
-    AUDIO_BITRATE = '192k'  # Better audio quality
+    VIDEO_BITRATE = os.environ.get('VIDEO_BITRATE', '4M')  # Higher bitrate for quality (T4 can handle 6M easily)
+    AUDIO_BITRATE = '192k'  # Good audio quality
     OUTPUT_FORMAT = 'mp4'
     
-    # GPU Acceleration settings - Configurable via environment
-    # Set USE_GPU_ACCELERATION=false in .env if FFmpeg NVENC doesn't work
+    # GPU Acceleration settings - OPTIMIZED FOR NVIDIA T4 (16GB VRAM)
     USE_GPU_ACCELERATION = os.environ.get('USE_GPU_ACCELERATION', 'true').lower() == 'true'
     GPU_DEVICE = int(os.environ.get('GPU_DEVICE', 0))  # Default GPU device (0 for first GPU)
-    NVENC_PRESET = os.environ.get('NVENC_PRESET', 'medium')  # Options: slow, medium, fast
-    NVENC_RC_MODE = 'vbr'  # Rate control: vbr (variable), cbr (constant), cqp (fixed QP)
-    NVENC_QUALITY = 25  # Quality (0=best, 51=worst) for CQP mode
+    NVENC_PRESET = os.environ.get('NVENC_PRESET', 'p4')  # NVENC Turing presets: p1(fastest)-p7(slowest), p4 = balanced
+    NVENC_TUNE = os.environ.get('NVENC_TUNE', 'hq')  # Tuning: hq (high quality), ll (low latency), ull (ultra low latency)
+    NVENC_RC_MODE = os.environ.get('NVENC_RC_MODE', 'vbr')  # Rate control: vbr, cbr, cqp
+    NVENC_QUALITY = int(os.environ.get('NVENC_QUALITY', 20))  # CQ level (0=best, 51=worst), 20 = excellent quality
+    NVENC_MULTIPASS = os.environ.get('NVENC_MULTIPASS', 'fullres')  # Multipass: disabled, qres, fullres
+    NVENC_B_FRAMES = int(os.environ.get('NVENC_B_FRAMES', 3))  # B-frames for better compression
+    NVENC_LOOKAHEAD = int(os.environ.get('NVENC_LOOKAHEAD', 20))  # Lookahead frames for rate control
     HWACCEL_DECODER = os.environ.get('HWACCEL_DECODER', 'cuda')  # Hardware-accelerated decoding
     HWACCEL_OUTPUT_FORMAT = 'cuda'  # Keep frames on GPU to reduce memory transfers
     
-    # CPU Encoding settings (used when GPU not available)
-    FFMPEG_THREADS = int(os.environ.get('FFMPEG_THREADS', 8))  # Number of threads for CPU encoding
-    CPU_PRESET = os.environ.get('CPU_PRESET', 'fast')  # libx264 preset: ultrafast, fast, medium, slow
+    # CPU Encoding settings (fallback when GPU not available)
+    FFMPEG_THREADS = int(os.environ.get('FFMPEG_THREADS', 0))  # 0 = auto-detect optimal threads
+    CPU_PRESET = os.environ.get('CPU_PRESET', 'medium')  # libx264: ultrafast, fast, medium, slow, veryslow
     
-    # GPU Filter Processing - Use CUDA filters for speed
-    USE_GPU_FILTERS = False  # Disable GPU filters due to compatibility issues, use CPU filters instead
-    SCALE_FILTER = 'scale'  # Use CPU-based scale (compatible with all codecs)
+    # GPU Filter Processing - Use CUDA filters for speed on T4
+    USE_GPU_FILTERS = os.environ.get('USE_GPU_FILTERS', 'true').lower() == 'true'  # Enable GPU filters
+    SCALE_FILTER = os.environ.get('SCALE_FILTER', 'scale_cuda')  # CUDA scaling (faster than CPU)
     
-    # Batch processing for parallel clip export
+    # Batch processing - OPTIMIZED FOR g4dn INSTANCES
     ENABLE_BATCH_EXPORT = True  # Process multiple clips in parallel
-    # Auto-detect optimal parallel exports based on CPU cores
     import multiprocessing
     _cpu_count = multiprocessing.cpu_count()
-    MAX_PARALLEL_EXPORTS = int(os.environ.get('MAX_PARALLEL_EXPORTS', min(4, max(2, _cpu_count // 2))))  # Use half of CPU cores, min 2, max 4
+    # g4dn.xlarge has 4 vCPU, g4dn.2xlarge has 8 vCPU
+    # T4 GPU can handle 4-6 parallel NVENC streams efficiently
+    MAX_PARALLEL_EXPORTS = int(os.environ.get('MAX_PARALLEL_EXPORTS', min(6, max(4, _cpu_count))))  # Optimized for g4dn
     
-    # Aspect ratio settings (16:9 for viral content)
-    TARGET_ASPECT_RATIO = '16:9'
+    # === ASPECT RATIO PRESETS ===
+    # Format presets for different platforms
+    ASPECT_RATIO_PRESETS = {
+        '16:9': {'width': 1920, 'height': 1080, 'name': 'YouTube/Landscape', 'platforms': ['youtube', 'desktop']},
+        '9:16': {'width': 1080, 'height': 1920, 'name': 'TikTok/Reels', 'platforms': ['tiktok', 'reels', 'shorts']},
+        '4:5': {'width': 1080, 'height': 1350, 'name': 'Instagram Feed', 'platforms': ['instagram']},
+        '1:1': {'width': 1080, 'height': 1080, 'name': 'Square', 'platforms': ['instagram', 'twitter']},
+    }
+    TARGET_ASPECT_RATIO = os.environ.get('TARGET_ASPECT_RATIO', '16:9')
+    DEFAULT_VERTICAL_FORMAT = os.environ.get('DEFAULT_VERTICAL_FORMAT', '9:16')
     
     # Resolution presets - user can select in frontend
     RESOLUTION_PRESETS = {
         '720p': {'width': 1280, 'height': 720, 'bitrate': '1M'},
-        '1080p': {'width': 1920, 'height': 1080, 'bitrate': '2M'}
+        '1080p': {'width': 1920, 'height': 1080, 'bitrate': '2M'},
+        '1080p_vertical': {'width': 1080, 'height': 1920, 'bitrate': '2M'},  # For TikTok/Reels
+        '720p_vertical': {'width': 720, 'height': 1280, 'bitrate': '1M'},  # For TikTok/Reels low
     }
     DEFAULT_RESOLUTION = '1080p'
     
     # Default resolution (can be overridden per-job)
     TARGET_WIDTH = 1920
     TARGET_HEIGHT = 1080
+    
+    # === SILENCE REMOVAL SETTINGS ===
+    # For "jump cut" style clips without dead air
+    SILENCE_REMOVAL_ENABLED = os.environ.get('SILENCE_REMOVAL_ENABLED', 'false').lower() == 'true'  # Off by default
+    SILENCE_THRESHOLD_DB = int(os.environ.get('SILENCE_THRESHOLD_DB', -35))  # dB threshold for silence detection
+    MIN_SILENCE_TO_REMOVE = float(os.environ.get('MIN_SILENCE_TO_REMOVE', 0.4))  # Minimum silence duration to remove (seconds)
+    MIN_SPEECH_DURATION = float(os.environ.get('MIN_SPEECH_DURATION', 0.2))  # Minimum speech duration to keep
+    SILENCE_PADDING = float(os.environ.get('SILENCE_PADDING', 0.05))  # Padding before/after speech (seconds)
+    
+    # Auto-enhance settings for TikTok-ready clips
+    AUTO_TIKTOK_MODE = os.environ.get('AUTO_TIKTOK_MODE', 'false').lower() == 'true'  # Auto 9:16 + silence removal
     
     # Hook overlay settings
     HOOK_ENABLED = True  # Enable automatic hook overlay

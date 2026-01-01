@@ -1,6 +1,11 @@
 """
 Flask Backend for AI Video Clipper
 Main application file
+
+OPTIMIZED FOR AWS g4dn / NVIDIA T4 GPU INSTANCES
+- Auto-configures GPU settings at startup
+- Whisper large-v3 with CUDA acceleration
+- NVENC encoding for 6-10x faster export
 """
 from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
@@ -24,6 +29,22 @@ from audio_analyzer import AudioAnalyzer
 from clip_generator import ClipGenerator
 import psutil
 
+# GPU Optimizer for automatic GPU configuration
+try:
+    from gpu_optimizer import get_gpu_optimizer, auto_configure_for_gpu
+    GPU_OPTIMIZER_AVAILABLE = True
+except ImportError:
+    GPU_OPTIMIZER_AVAILABLE = False
+    print("⚠️ GPU Optimizer not available - using default config")
+
+# Batch Processor for parallel clip export
+try:
+    from batch_processor import BatchProcessor, GPUAwareExporter, create_batch_processor
+    BATCH_PROCESSOR_AVAILABLE = True
+except ImportError:
+    BATCH_PROCESSOR_AVAILABLE = False
+    print("⚠️ Batch Processor not available - using sequential export")
+
 try:
     import yt_dlp
     YTDLPDownloadError = yt_dlp.utils.DownloadError
@@ -32,6 +53,37 @@ except ImportError:  # pragma: no cover - optional dependency outside tests
     class YTDLPDownloadError(Exception):
         """Fallback exception when yt-dlp is unavailable."""
         pass
+
+# Initialize GPU optimizer and auto-configure
+gpu_optimizer = None
+batch_processor = None
+gpu_exporter = None
+
+if GPU_OPTIMIZER_AVAILABLE:
+    try:
+        gpu_optimizer = get_gpu_optimizer()
+        auto_configure_for_gpu(Config)
+        print("✅ GPU auto-configuration complete")
+    except Exception as e:
+        print(f"⚠️ GPU auto-configuration failed: {e}")
+
+if BATCH_PROCESSOR_AVAILABLE and gpu_optimizer:
+    try:
+        batch_processor, gpu_exporter = create_batch_processor(Config, gpu_optimizer)
+        print("✅ Batch processor initialized")
+    except Exception as e:
+        print(f"⚠️ Batch processor initialization failed: {e}")
+
+# Clip Enhancer for silence removal & vertical format
+try:
+    from clip_enhancer import ClipEnhancer, SilenceRemover, VerticalFormatter
+    CLIP_ENHANCER_AVAILABLE = True
+    clip_enhancer = ClipEnhancer(Config)
+    print("✅ Clip Enhancer initialized (silence removal + vertical format)")
+except ImportError:
+    CLIP_ENHANCER_AVAILABLE = False
+    clip_enhancer = None
+    print("⚠️ Clip Enhancer not available")
 
 app = Flask(__name__)
 CORS(app)
@@ -1015,7 +1067,260 @@ def system_stats():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-# Serve frontend in production
+
+@app.route('/api/gpu-stats', methods=['GET'])
+def get_gpu_stats():
+    """
+    Get GPU statistics for monitoring.
+    Returns GPU utilization, memory, temperature, and optimizer settings.
+    """
+    try:
+        if not GPU_OPTIMIZER_AVAILABLE or gpu_optimizer is None:
+            return jsonify({
+                'available': False,
+                'message': 'GPU optimizer not available'
+            })
+        
+        stats = gpu_optimizer.get_gpu_stats()
+        
+        # Add batch processor stats if available
+        if batch_processor:
+            stats['batch_processor'] = batch_processor.get_stats()
+        
+        # Add current config settings
+        stats['config'] = {
+            'whisper_model': getattr(Config, 'FASTER_WHISPER_MODEL', 'unknown'),
+            'whisper_device': getattr(Config, 'FASTER_WHISPER_DEVICE', 'unknown'),
+            'whisper_compute_type': getattr(Config, 'FASTER_WHISPER_COMPUTE_TYPE', 'unknown'),
+            'video_codec': getattr(Config, 'VIDEO_CODEC', 'unknown'),
+            'video_bitrate': getattr(Config, 'VIDEO_BITRATE', 'unknown'),
+            'max_parallel_exports': getattr(Config, 'MAX_PARALLEL_EXPORTS', 1),
+            'nvenc_preset': getattr(Config, 'NVENC_PRESET', 'unknown'),
+        }
+        
+        return jsonify(stats)
+    except Exception as e:
+        print(f"Error getting GPU stats: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/gpu-estimate', methods=['POST'])
+def estimate_processing_time():
+    """
+    Estimate processing time for a video based on GPU capabilities.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        video_duration = float(data.get('duration', 60))
+        
+        if gpu_optimizer:
+            estimate = gpu_optimizer.estimate_processing_time(video_duration)
+        else:
+            # CPU fallback estimate
+            estimate = {
+                'transcription_minutes': video_duration / 60 * 10,
+                'analysis_minutes': video_duration / 60 * 2,
+                'export_minutes': video_duration / 60 * 5,
+                'total_minutes': video_duration / 60 * 17,
+                'device': 'cpu'
+            }
+        
+        return jsonify(estimate)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/enhance-clip', methods=['POST'])
+def enhance_clip():
+    """
+    Enhance a clip with silence removal and/or vertical format conversion.
+    
+    Request body:
+    {
+        "job_id": "job_123",
+        "filename": "clip_001.mp4",
+        "remove_silence": true,
+        "vertical_format": "9:16",  // or "4:5", "1:1", null
+        "crop_position": "center"   // or "left", "right"
+    }
+    """
+    try:
+        if not CLIP_ENHANCER_AVAILABLE or clip_enhancer is None:
+            return jsonify({
+                'error': 'Clip enhancer not available. Install required dependencies.'
+            }), 500
+        
+        data = request.get_json(silent=True) or {}
+        
+        job_id = data.get('job_id')
+        filename = data.get('filename')
+        remove_silence = bool(data.get('remove_silence', False))
+        vertical_format = data.get('vertical_format')  # '9:16', '4:5', '1:1', or None
+        crop_position = data.get('crop_position', 'center')
+        
+        if not job_id or not filename:
+            return jsonify({'error': 'job_id and filename required'}), 400
+        
+        if not is_safe_job_id(job_id) or not is_safe_filename(filename):
+            return jsonify({'error': 'Invalid job_id or filename'}), 400
+        
+        # Validate vertical format
+        valid_formats = ['9:16', '4:5', '1:1', '16:9']
+        if vertical_format and vertical_format not in valid_formats:
+            return jsonify({'error': f'Invalid format. Choose from: {valid_formats}'}), 400
+        
+        # Find input clip
+        input_path = os.path.join(Config.OUTPUT_FOLDER, job_id, filename)
+        if not os.path.exists(input_path):
+            return jsonify({'error': 'Clip not found'}), 404
+        
+        # Generate output filename
+        name, ext = os.path.splitext(filename)
+        suffix = ""
+        if remove_silence:
+            suffix += "_nosilence"
+        if vertical_format:
+            suffix += f"_{vertical_format.replace(':', 'x')}"
+        
+        output_filename = f"{name}{suffix}{ext}"
+        output_path = os.path.join(Config.OUTPUT_FOLDER, job_id, output_filename)
+        
+        print(f"\n🎬 Enhancing clip: {filename}")
+        print(f"   Remove silence: {remove_silence}")
+        print(f"   Vertical format: {vertical_format or 'None'}")
+        
+        # Enhance clip
+        use_gpu = getattr(Config, 'USE_GPU_ACCELERATION', True)
+        success, metadata = clip_enhancer.enhance_clip(
+            input_path, output_path,
+            remove_silence=remove_silence,
+            vertical_format=vertical_format,
+            crop_position=crop_position,
+            use_gpu=use_gpu
+        )
+        
+        if success:
+            # Get output file info
+            file_size = os.path.getsize(output_path)
+            duration = get_video_duration(output_path)
+            
+            return jsonify({
+                'success': True,
+                'original_file': filename,
+                'enhanced_file': output_filename,
+                'file_size': file_size,
+                'duration': duration,
+                'metadata': metadata,
+                'download_url': f'/api/download/{job_id}/{output_filename}'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': metadata.get('error', 'Enhancement failed')
+            }), 500
+            
+    except Exception as e:
+        print(f"Error enhancing clip: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/formats', methods=['GET'])
+def get_format_presets():
+    """
+    Get available format presets for clip export.
+    """
+    return jsonify({
+        'aspect_ratios': getattr(Config, 'ASPECT_RATIO_PRESETS', {
+            '16:9': {'width': 1920, 'height': 1080, 'name': 'YouTube/Landscape'},
+            '9:16': {'width': 1080, 'height': 1920, 'name': 'TikTok/Reels'},
+            '4:5': {'width': 1080, 'height': 1350, 'name': 'Instagram Feed'},
+            '1:1': {'width': 1080, 'height': 1080, 'name': 'Square'},
+        }),
+        'resolutions': getattr(Config, 'RESOLUTION_PRESETS', {}),
+        'silence_removal': {
+            'enabled': getattr(Config, 'SILENCE_REMOVAL_ENABLED', False),
+            'threshold_db': getattr(Config, 'SILENCE_THRESHOLD_DB', -35),
+            'min_silence': getattr(Config, 'MIN_SILENCE_TO_REMOVE', 0.4),
+        },
+        'default_format': getattr(Config, 'DEFAULT_VERTICAL_FORMAT', '9:16'),
+        'clip_enhancer_available': CLIP_ENHANCER_AVAILABLE
+    })
+
+
+@app.route('/api/batch-enhance', methods=['POST'])
+def batch_enhance_clips():
+    """
+    Enhance multiple clips at once.
+    
+    Request body:
+    {
+        "job_id": "job_123",
+        "clips": ["clip_001.mp4", "clip_002.mp4"],
+        "remove_silence": true,
+        "vertical_format": "9:16"
+    }
+    """
+    try:
+        if not CLIP_ENHANCER_AVAILABLE:
+            return jsonify({'error': 'Clip enhancer not available'}), 500
+        
+        data = request.get_json(silent=True) or {}
+        
+        job_id = data.get('job_id')
+        clip_filenames = data.get('clips', [])
+        remove_silence = bool(data.get('remove_silence', False))
+        vertical_format = data.get('vertical_format')
+        
+        if not job_id or not clip_filenames:
+            return jsonify({'error': 'job_id and clips required'}), 400
+        
+        if not is_safe_job_id(job_id):
+            return jsonify({'error': 'Invalid job_id'}), 400
+        
+        # Prepare clip list
+        job_dir = os.path.join(Config.OUTPUT_FOLDER, job_id)
+        clips = []
+        for filename in clip_filenames:
+            if is_safe_filename(filename):
+                clip_path = os.path.join(job_dir, filename)
+                if os.path.exists(clip_path):
+                    clips.append({'path': clip_path, 'filename': filename})
+        
+        if not clips:
+            return jsonify({'error': 'No valid clips found'}), 404
+        
+        # Create enhanced output directory
+        enhanced_dir = os.path.join(job_dir, 'enhanced')
+        os.makedirs(enhanced_dir, exist_ok=True)
+        
+        # Batch enhance
+        use_gpu = getattr(Config, 'USE_GPU_ACCELERATION', True)
+        results = clip_enhancer.batch_enhance(
+            clips, enhanced_dir,
+            remove_silence=remove_silence,
+            vertical_format=vertical_format,
+            use_gpu=use_gpu
+        )
+        
+        successful = sum(1 for r in results if r.get('success'))
+        
+        return jsonify({
+            'success': True,
+            'total': len(clips),
+            'successful': successful,
+            'failed': len(clips) - successful,
+            'results': results,
+            'enhanced_dir': f'{job_id}/enhanced'
+        })
+        
+    except Exception as e:
+        print(f"Error batch enhancing clips: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_frontend(path):
@@ -1040,9 +1345,26 @@ if __name__ == '__main__':
     parser.add_argument('--port', type=int, default=5000, help='Port to run on')
     args = parser.parse_args()
     
+    # Print startup configuration
+    print("\n" + "="*60)
+    print("🎬 AI VIDEO CLIPPER - GPU OPTIMIZED")
+    print("="*60)
+    print(f"   Whisper Model: {getattr(Config, 'FASTER_WHISPER_MODEL', 'N/A')}")
+    print(f"   Whisper Device: {getattr(Config, 'FASTER_WHISPER_DEVICE', 'N/A')}")
+    print(f"   Compute Type: {getattr(Config, 'FASTER_WHISPER_COMPUTE_TYPE', 'N/A')}")
+    print(f"   Beam Size: {getattr(Config, 'FASTER_WHISPER_BEAM_SIZE', 'N/A')}")
+    print(f"   Video Codec: {getattr(Config, 'VIDEO_CODEC', 'N/A')}")
+    print(f"   Video Bitrate: {getattr(Config, 'VIDEO_BITRATE', 'N/A')}")
+    print(f"   NVENC Preset: {getattr(Config, 'NVENC_PRESET', 'N/A')}")
+    print(f"   Parallel Exports: {getattr(Config, 'MAX_PARALLEL_EXPORTS', 'N/A')}")
+    print(f"   GPU Optimizer: {'✅ Active' if gpu_optimizer else '❌ Inactive'}")
+    print(f"   Batch Processor: {'✅ Active' if batch_processor else '❌ Inactive'}")
+    print("="*60 + "\n")
+    
     if args.production:
         print("🚀 Running in PRODUCTION mode")
         app.run(host='0.0.0.0', port=args.port, debug=False)
     else:
         print("🔧 Running in DEVELOPMENT mode")
         app.run(host='127.0.0.1', port=args.port, debug=True)
+
