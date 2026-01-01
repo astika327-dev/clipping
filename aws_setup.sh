@@ -145,14 +145,20 @@ print_step "8/10 - Configure Environment"
 cd $APP_DIR/backend
 
 if [ ! -f .env ]; then
-    cp .env.example .env
-    
-    # Update for production
-    sed -i 's/FASTER_WHISPER_MODEL=large/FASTER_WHISPER_MODEL=large-v3/' .env
-    sed -i 's/FASTER_WHISPER_DEVICE=cuda/FASTER_WHISPER_DEVICE=cuda/' .env
-    sed -i 's/ENABLE_DEEP_LEARNING_VIDEO=true/ENABLE_DEEP_LEARNING_VIDEO=true/' .env
-    
-    print_status ".env file created"
+    # Use optimized AWS configuration
+    if [ -f .env.aws-optimal ]; then
+        cp .env.aws-optimal .env
+        print_status "Copied optimized AWS configuration (.env.aws-optimal)"
+    else
+        cp .env.example .env
+        # Update for GPU production
+        sed -i 's/FASTER_WHISPER_MODEL=.*/FASTER_WHISPER_MODEL=large-v3/' .env
+        sed -i 's/FASTER_WHISPER_DEVICE=.*/FASTER_WHISPER_DEVICE=cuda/' .env
+        sed -i 's/FASTER_WHISPER_COMPUTE_TYPE=.*/FASTER_WHISPER_COMPUTE_TYPE=float16/' .env
+        sed -i 's/VIDEO_CODEC=.*/VIDEO_CODEC=h264_nvenc/' .env
+        sed -i 's/USE_GPU_ACCELERATION=.*/USE_GPU_ACCELERATION=true/' .env
+        print_status ".env file created with GPU settings"
+    fi
 else
     print_warning ".env file already exists, skipping..."
 fi
