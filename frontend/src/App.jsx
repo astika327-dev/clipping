@@ -18,7 +18,8 @@ function App() {
     targetDuration: 'all',
     style: 'balanced',
     resolution: '1080p',
-    useTimotyHook: true,
+    clippingMode: 'general',  // 'general', 'timoty', 'kalimasada'
+    useTimotyHook: false,  // Now controlled by clippingMode
     autoCaption: false,
     transcriptionBackend: 'faster-whisper',
     modelSize: 'medium'

@@ -261,7 +261,7 @@ class ClipGenerator:
         
     def generate_clips(self, video_analysis: Dict, audio_analysis: Dict,
                       target_duration: str = 'all', style: str = 'balanced',
-                      hook_mode: str = None) -> List[Dict]:
+                      hook_mode: str = None, clipping_mode: str = 'general') -> List[Dict]:
         """
         Generate clips based on analysis
         GUARANTEED to return at least FORCED_MIN_CLIP_OUTPUT clips.
@@ -271,9 +271,14 @@ class ClipGenerator:
             audio_analysis: Results from AudioAnalyzer
             target_duration: 'short' (9-15s), 'medium' (18-22s), 'long' (28-32s), 'extended' (40-50s), or 'all'
             style: 'funny', 'educational', 'dramatic', 'controversial', or 'balanced'
+            hook_mode: 'timoty', 'kalimasada', or None
+            clipping_mode: 'general', 'timoty', or 'kalimasada' - affects scoring and detection patterns
         """
         print("✂️ Generating clips...")
-        print(f"   Target duration: {target_duration}, Style: {style}")
+        print(f"   Target duration: {target_duration}, Style: {style}, Mode: {clipping_mode}")
+
+        # Store clipping_mode for use in scoring
+        self.clipping_mode = clipping_mode
 
         # Store punchlines for text flash overlays
         analysis_data = audio_analysis.get('analysis', {})
@@ -292,15 +297,15 @@ class ClipGenerator:
             print("⚠️ WARNING: No segments after merge! Creating emergency segments...")
             segments = self._create_last_resort_segments(video_analysis, audio_analysis)
         
-        # Score and rank segments
-        scored_segments = self._score_segments(segments, style)
+        # Score and rank segments (pass clipping_mode for mode-specific scoring)
+        scored_segments = self._score_segments(segments, style, clipping_mode=clipping_mode)
         print(f"📊 Scored segments: {len(scored_segments)}")
         
         # CRITICAL SAFETY: If scoring returned empty, create emergency segments NOW
         if not scored_segments:
             print("🚨 CRITICAL: Scoring returned 0 segments! Creating emergency segments...")
             emergency_segs = self._create_last_resort_segments(video_analysis, audio_analysis)
-            scored_segments = self._score_segments(emergency_segs, style)
+            scored_segments = self._score_segments(emergency_segs, style, clipping_mode=clipping_mode)
             if not scored_segments:
                 # Absolute last resort: return unscored emergency segments
                 print("🆘 ABSOLUTE EMERGENCY: Using unscored emergency segments")
@@ -1843,12 +1848,21 @@ class ClipGenerator:
         
         return validation
     
-    def _score_segments(self, segments: List[Dict], style: str) -> List[Dict]:
+    def _score_segments(self, segments: List[Dict], style: str, clipping_mode: str = 'general') -> List[Dict]:
         """
         Score each segment for clip potential with HIGH IQ/EQ analysis.
-        Optimized for Timothy Ronald & Kalimasada content patterns.
+        
+        Modes:
+            - 'general': Generic scoring without creator-specific bonuses
+            - 'timoty': Optimized for Timothy Ronald content patterns
+            - 'kalimasada': Optimized for Kalimasada (Prof Kaka) content patterns
         """
-        print(f"📊 Scoring segments with Timothy Ronald & Kalimasada optimization (style: {style})...")
+        mode_descriptions = {
+            'general': 'General mode (all content types)',
+            'timoty': 'Timothy Ronald optimization',
+            'kalimasada': 'Kalimasada/Prof Kaka optimization'
+        }
+        print(f"📊 Scoring segments with {mode_descriptions.get(clipping_mode, 'general mode')} (style: {style})...")
         
         scored = []
         
@@ -1875,22 +1889,29 @@ class ClipGenerator:
             elif narrative_context['has_complete_thought'] > 0.4:
                 viral_score += 0.05
             
-            # CONTENT TYPE BONUSES (Both creators)
+            # CONTENT TYPE BONUSES (conditional based on clipping_mode)
             content_type = narrative_context.get('content_type', 'general')
             
-            # Timothy Ronald specialties
-            if content_type == 'mental_slap':
-                viral_score += 0.18  # Mental slap is Timothy's specialty
-            elif content_type == 'money_talk':
-                viral_score += 0.15  # Money content is their core
-            elif content_type == 'mindset':
-                viral_score += 0.12  # Mindset content performs well
-            
-            # Kalimasada specialties
-            elif content_type == 'crypto_trading':
-                viral_score += 0.20  # Crypto trading is Kalimasada's specialty
-            elif content_type == 'educational':
-                viral_score += 0.15  # Educational content (Prof Kaka style)
+            if clipping_mode == 'timoty':
+                # Timothy Ronald specialties - only apply in timoty mode
+                if content_type == 'mental_slap':
+                    viral_score += 0.18  # Mental slap is Timothy's specialty
+                elif content_type == 'money_talk':
+                    viral_score += 0.15  # Money content is their core
+                elif content_type == 'mindset':
+                    viral_score += 0.12  # Mindset content performs well
+                    
+            elif clipping_mode == 'kalimasada':
+                # Kalimasada specialties - only apply in kalimasada mode
+                if content_type == 'crypto_trading':
+                    viral_score += 0.20  # Crypto trading is Kalimasada's specialty
+                elif content_type == 'educational':
+                    viral_score += 0.15  # Educational content (Prof Kaka style)
+                    
+            else:  # General mode
+                # Apply smaller, balanced bonuses for any content type
+                if content_type in ['mental_slap', 'money_talk', 'mindset', 'crypto_trading', 'educational']:
+                    viral_score += 0.08  # General bonus for valuable content
             
             # CONVERSATIONAL METRICS (New)
             # Boost score for dynamic conversations (2-person podcasts)
@@ -1901,11 +1922,16 @@ class ClipGenerator:
                 if left > 0.1 and right > 0.1:
                     viral_score += 0.12  # Bonus for active back-and-forth
             
-            # CREATOR SIGNATURE BONUSES
-            if narrative_context.get('is_timoty_signature'):
+            # CREATOR SIGNATURE BONUSES (only for specific modes)
+            if clipping_mode == 'timoty' and narrative_context.get('is_timoty_signature'):
                 viral_score += 0.15  # Timothy signature patterns
-            if narrative_context.get('is_kalimasada_signature'):
+            if clipping_mode == 'kalimasada' and narrative_context.get('is_kalimasada_signature'):
                 viral_score += 0.15  # Kalimasada signature patterns
+            
+            # In general mode, give smaller bonus for any detected signature
+            if clipping_mode == 'general':
+                if narrative_context.get('is_timoty_signature') or narrative_context.get('is_kalimasada_signature'):
+                    viral_score += 0.05  # Smaller general bonus
             
             # Creator style identification (for metadata)
             creator_style = narrative_context.get('creator_style', 'general')

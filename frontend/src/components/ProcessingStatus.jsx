@@ -57,6 +57,7 @@ function ProcessingStatus({ filename, jobId, settings, onComplete, onCancel }) {
         target_duration: settings.targetDuration,
         style: settings.style,
         resolution: settings.resolution || '1080p',
+        clipping_mode: settings.clippingMode || 'general',
         use_timoty_hooks: settings.useTimotyHook,
         auto_caption: settings.autoCaption
       })
@@ -188,9 +189,13 @@ function ProcessingStatus({ filename, jobId, settings, onComplete, onCancel }) {
                 <p className="text-xs uppercase tracking-wide text-white/40">Gaya</p>
                 <p className="text-base font-semibold text-white mt-1 capitalize">{settings.style}</p>
               </div>
-              <div className="glass rounded-xl p-4 border border-white/10 col-span-2">
-                <p className="text-xs uppercase tracking-wide text-white/40">Resolusi Output</p>
+              <div className="glass rounded-xl p-4 border border-white/10">
+                <p className="text-xs uppercase tracking-wide text-white/40">Resolusi</p>
                 <p className="text-base font-semibold text-white mt-1">{settings.resolution || '1080p'}</p>
+              </div>
+              <div className="glass rounded-xl p-4 border border-white/10 col-span-2">
+                <p className="text-xs uppercase tracking-wide text-white/40">Mode Clipping</p>
+                <p className="text-base font-semibold text-white mt-1 capitalize">{formatClippingMode(settings.clippingMode)}</p>
               </div>
             </div>
 
@@ -284,6 +289,15 @@ function formatTargetDuration(target) {
     all: 'Semua durasi'
   }
   return mapping[target] || target
+}
+
+function formatClippingMode(mode) {
+  const mapping = {
+    general: '🎬 General',
+    timoty: '🔥 Timoty Ronald',
+    kalimasada: '📊 Kalimasada'
+  }
+  return mapping[mode] || 'General'
 }
 
 export default ProcessingStatus

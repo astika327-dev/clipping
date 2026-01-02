@@ -443,8 +443,13 @@ def process_video():
         language = data.get('language', 'id')
         target_duration = data.get('target_duration', 'all')
         style = data.get('style', 'balanced')
+        clipping_mode = data.get('clipping_mode', 'general')  # 'general', 'timoty', 'kalimasada'
         use_timoty_hooks = bool(data.get('use_timoty_hooks', False))
         auto_caption = bool(data.get('auto_caption', False))
+        
+        # Validate clipping_mode
+        if clipping_mode not in ['general', 'timoty', 'kalimasada']:
+            clipping_mode = 'general'
         
         # Resolution setting - new parameter
         resolution = data.get('resolution', Config.DEFAULT_RESOLUTION)
@@ -521,14 +526,23 @@ def process_video():
             processing_status[job_id]['message'] = 'Menentukan potongan klip terbaik...'
             processing_status[job_id]['progress'] = 60
             
-            # Pass resolution setting to ClipGenerator
+            # Determine hook_mode based on clipping_mode and use_timoty_hooks flag
+            if clipping_mode == 'timoty' or use_timoty_hooks:
+                hook_mode = 'timoty'
+            elif clipping_mode == 'kalimasada':
+                hook_mode = 'kalimasada'
+            else:
+                hook_mode = None  # General mode - no specific hook style
+            
+            # Pass resolution and clipping_mode settings to ClipGenerator
             clip_generator = ClipGenerator(filepath, Config, resolution=resolution)
             clips = clip_generator.generate_clips(
                 video_analysis,
                 audio_analysis,
                 target_duration,
                 style,
-                hook_mode='timoty' if use_timoty_hooks else None
+                hook_mode=hook_mode,
+                clipping_mode=clipping_mode
             )
             
             processing_status[job_id]['message'] = f'Ditemukan {len(clips)} klip potensial...'
@@ -626,6 +640,7 @@ def process_video():
                         'language': language,
                         'target_duration': target_duration,
                         'style': style,
+                        'clipping_mode': clipping_mode,
                         'use_timoty_hooks': use_timoty_hooks,
                         'auto_caption': auto_caption
                     },

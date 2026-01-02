@@ -124,6 +124,68 @@ function SettingsPanel({ settings, onSettingsChange, onProcessStart, uploadedVid
           </p>
         </div>
 
+        {/* Clipping Mode */}
+        <div>
+          <label className="block text-sm font-medium mb-2">
+            Mode Clipping
+          </label>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {[
+              { 
+                value: 'general', 
+                label: 'General', 
+                emoji: '🎬', 
+                description: 'Semua jenis konten',
+                borderColor: '#10b981',
+                bgColor: 'rgba(16, 185, 129, 0.2)'
+              },
+              { 
+                value: 'timoty', 
+                label: 'Timoty Ronald', 
+                emoji: '🔥', 
+                description: 'Optimized untuk gaya Timoty',
+                borderColor: '#a855f7',
+                bgColor: 'rgba(168, 85, 247, 0.2)'
+              },
+              { 
+                value: 'kalimasada', 
+                label: 'Kalimasada', 
+                emoji: '📊', 
+                description: 'Optimized untuk crypto/trading',
+                borderColor: '#22d3ee',
+                bgColor: 'rgba(34, 211, 238, 0.2)'
+              }
+            ].map((option) => (
+              <button
+                key={option.value}
+                onClick={() => onSettingsChange({ 
+                  ...settings, 
+                  clippingMode: option.value,
+                  useTimotyHook: option.value === 'timoty'
+                })}
+                className="p-4 rounded-lg border-2 transition-all text-left"
+                style={settings.clippingMode === option.value ? {
+                  borderColor: option.borderColor,
+                  backgroundColor: option.bgColor
+                } : {
+                  borderColor: 'rgba(255, 255, 255, 0.2)'
+                }}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="text-3xl">{option.emoji}</div>
+                  <div>
+                    <div className="text-sm font-semibold">{option.label}</div>
+                    <div className="text-[10px] text-white/60">{option.description}</div>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+          <p className="text-white/50 text-xs mt-2">
+            Pilih mode sesuai jenis konten video. General cocok untuk semua jenis video.
+          </p>
+        </div>
+
         {/* Hooks & Caption */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="glass rounded-xl p-4 border border-white/10">
