@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Trash2, RefreshCw, Download } from 'lucide-react'
+import { Trash2, RefreshCw, Download, Play } from 'lucide-react'
 
-function StoragePage() {
+function StoragePage({ onUseVideo }) {
   const [storageData, setStorageData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState(false)
@@ -127,6 +127,25 @@ function StoragePage() {
     }
   }
 
+  const handleUseVideo = (file) => {
+    if (!onUseVideo) {
+      setMessage('❌ Tidak dapat menggunakan video dari halaman ini')
+      return
+    }
+    
+    // Create video data object similar to what VideoUploader returns
+    const videoData = {
+      filename: file.filename,
+      filepath: file.filepath || `/uploads/${file.filename}`,
+      size: file.size_bytes || file.size_mb * 1024 * 1024,
+      duration: file.duration || 0,
+      source: 'storage'
+    }
+    
+    onUseVideo(videoData)
+    setMessage(`✅ Video "${file.filename}" siap diproses!`)
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -250,13 +269,24 @@ function StoragePage() {
                         {file.size_mb} MB
                       </p>
                     </div>
-                    <button
-                      onClick={() => deleteFile(file.filename)}
-                      disabled={deleting}
-                      className="btn-danger text-sm ml-2 flex-shrink-0"
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                    <div className="flex gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => handleUseVideo(file)}
+                        className="btn-primary text-sm flex items-center gap-1.5"
+                        title="Gunakan video ini"
+                      >
+                        <Play size={14} />
+                        <span className="hidden sm:inline">Gunakan</span>
+                      </button>
+                      <button
+                        onClick={() => deleteFile(file.filename)}
+                        disabled={deleting}
+                        className="btn-danger text-sm"
+                        title="Hapus video"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>

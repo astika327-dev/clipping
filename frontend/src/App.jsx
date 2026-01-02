@@ -240,7 +240,17 @@ function App() {
           )}
 
           {currentPage === 'clips' && <ClipsPage />}
-          {currentPage === 'storage' && <StoragePage />}
+          {currentPage === 'storage' && (
+            <StoragePage 
+              onUseVideo={(videoData) => {
+                setUploadedVideo(videoData)
+                setClips([])
+                setJobId(null)
+                setUiStep('ready')
+                setCurrentPage('home')
+              }}
+            />
+          )}
           {currentPage === 'gallery' && <GalleryPage />}
           {currentPage === 'settings' && <SettingsPage />}
         </div>
