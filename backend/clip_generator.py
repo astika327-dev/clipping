@@ -38,6 +38,15 @@ except ImportError as e:
     LLM_INTELLIGENCE_AVAILABLE = False
     print(f"   ⚠️ LLM Intelligence not available: {e}")
 
+# AI Enhancements Import (Audio Energy, Emotion, Speech Pace)
+try:
+    from ai_enhancements import AIEnhancer, get_ai_enhancer
+    AI_ENHANCEMENTS_AVAILABLE = True
+    print("   ✅ AI Enhancements loaded (Audio Energy, Emotion, Pace)")
+except ImportError as e:
+    AI_ENHANCEMENTS_AVAILABLE = False
+    print(f"   ⚠️ AI Enhancements not available: {e}")
+
 
 class TimotyHookGenerator:
     """Generate punchy hook lines inspired by Timoty Ronald's delivery."""
@@ -215,7 +224,7 @@ class TimotyHookGenerator:
 
 
 class ClipGenerator:
-    def __init__(self, video_path: str, config, resolution: str = None):
+    def __init__(self, video_path: str, config, resolution: str = None, aspect_ratio: str = None):
         self.video_path = video_path
         self.config = config
         self.clips = []
@@ -246,6 +255,19 @@ class ClipGenerator:
                 print(f"   ⚠️ LLM Intelligence initialization failed: {e}")
                 self.llm_enabled = False
         
+        # Aspect ratio presets (TikTok/Reels, Instagram, Square, YouTube)
+        aspect_ratio_presets = {
+            '9:16': {'width': 1080, 'height': 1920, 'name': 'TikTok/Reels', 'vertical': True},
+            '4:5': {'width': 1080, 'height': 1350, 'name': 'Instagram Feed', 'vertical': True},
+            '1:1': {'width': 1080, 'height': 1080, 'name': 'Square', 'vertical': False},
+            '16:9': {'width': 1920, 'height': 1080, 'name': 'YouTube/Landscape', 'vertical': False}
+        }
+        
+        # Set aspect ratio (default to 16:9 for backward compatibility)
+        self.aspect_ratio = aspect_ratio or '16:9'
+        aspect_preset = aspect_ratio_presets.get(self.aspect_ratio, aspect_ratio_presets['16:9'])
+        self.is_vertical = aspect_preset.get('vertical', False)
+        
         # Set resolution from preset or use default
         self.resolution = resolution or getattr(config, 'DEFAULT_RESOLUTION', '1080p')
         resolution_presets = getattr(config, 'RESOLUTION_PRESETS', {
@@ -253,11 +275,47 @@ class ClipGenerator:
             '1080p': {'width': 1920, 'height': 1080, 'bitrate': '2M'}
         })
         
-        preset = resolution_presets.get(self.resolution, resolution_presets.get('1080p'))
-        self.target_width = preset['width']
-        self.target_height = preset['height']
-        self.target_bitrate = preset['bitrate']
-        print(f"📐 Resolution set to: {self.resolution} ({self.target_width}x{self.target_height}, {self.target_bitrate})")
+        res_preset = resolution_presets.get(self.resolution, resolution_presets.get('1080p'))
+        
+        # Override dimensions based on aspect ratio
+        if self.aspect_ratio != '16:9':
+            # Use aspect ratio dimensions for non-landscape formats
+            self.target_width = aspect_preset['width']
+            self.target_height = aspect_preset['height']
+            # Adjust bitrate based on resolution choice
+            if self.resolution == '720p':
+                self.target_bitrate = '1M'
+                # Scale down for 720p
+                if self.aspect_ratio == '9:16':
+                    self.target_width = 720
+                    self.target_height = 1280
+                elif self.aspect_ratio == '4:5':
+                    self.target_width = 720
+                    self.target_height = 900
+                elif self.aspect_ratio == '1:1':
+                    self.target_width = 720
+                    self.target_height = 720
+            else:
+                self.target_bitrate = '2M'
+        else:
+            # Standard 16:9 - use resolution preset
+            self.target_width = res_preset['width']
+            self.target_height = res_preset['height']
+            self.target_bitrate = res_preset['bitrate']
+        
+        print(f"📐 Format: {aspect_preset['name']} ({self.aspect_ratio}) @ {self.resolution}")
+        print(f"   Output: {self.target_width}x{self.target_height}, {self.target_bitrate}")
+        
+        # Initialize AI Enhancements (Audio Energy, Emotion, Pace Analysis)
+        self.ai_enhancements_enabled = AI_ENHANCEMENTS_AVAILABLE
+        self.ai_enhancer = None
+        if self.ai_enhancements_enabled:
+            try:
+                self.ai_enhancer = get_ai_enhancer(video_path, config)
+                print("   🤖 AI Enhancements: Audio energy, emotion, pace analysis enabled")
+            except Exception as e:
+                print(f"   ⚠️ AI Enhancements initialization failed: {e}")
+                self.ai_enhancements_enabled = False
         
     def generate_clips(self, video_analysis: Dict, audio_analysis: Dict,
                       target_duration: str = 'all', style: str = 'balanced',
@@ -300,6 +358,21 @@ class ClipGenerator:
         # Score and rank segments (pass clipping_mode for mode-specific scoring)
         scored_segments = self._score_segments(segments, style, clipping_mode=clipping_mode)
         print(f"📊 Scored segments: {len(scored_segments)}")
+        
+        # AI ENHANCEMENTS: Apply audio energy, emotion, pace analysis
+        if self.ai_enhancements_enabled and self.ai_enhancer and scored_segments:
+            try:
+                print("🤖 Applying AI Enhancements (audio energy, emotion, pace)...")
+                scored_segments = self.ai_enhancer.enhance_all_segments(scored_segments)
+                
+                # Log boost statistics
+                boosts = [s.get('ai_boost_applied', 0) for s in scored_segments if 'ai_boost_applied' in s]
+                if boosts:
+                    avg_boost = sum(boosts) / len(boosts)
+                    max_boost = max(boosts)
+                    print(f"   📈 AI Boost Stats: avg={avg_boost:.3f}, max={max_boost:.3f}")
+            except Exception as e:
+                print(f"   ⚠️ AI Enhancement pass failed: {e}")
         
         # CRITICAL SAFETY: If scoring returned empty, create emergency segments NOW
         if not scored_segments:
@@ -2597,6 +2670,12 @@ class ClipGenerator:
                     'hashtags': intel.recommended_hashtags[:10] if intel.recommended_hashtags else []
                 }
                 
+                # Flat fields for easier frontend access
+                clip_payload['tiktok_caption'] = intel.tiktok_caption
+                clip_payload['instagram_caption'] = intel.instagram_caption
+                clip_payload['youtube_shorts_title'] = intel.youtube_shorts_title
+                clip_payload['recommended_hashtags'] = intel.recommended_hashtags[:10] if intel.recommended_hashtags else []
+                
                 # Adjust viral score based on AI quality assessment
                 if intel.quality_score > 0:
                     original_score = segment['viral_score']
@@ -2633,6 +2712,23 @@ class ClipGenerator:
                 hook_detail = self.hook_generator.generate(segment)
                 if hook_detail:
                     clip_payload['timoty_hook'] = hook_detail
+            
+            # AI ENHANCEMENTS: Add enhancement data if available
+            if segment.get('ai_enhancement'):
+                clip_payload['ai_enhancement'] = segment['ai_enhancement']
+                clip_payload['ai_boost'] = segment.get('ai_boost_applied', 0)
+                
+                # Add flat fields for frontend
+                ai_data = segment['ai_enhancement']
+                if ai_data.get('emotion', {}).get('dominant') != 'neutral':
+                    clip_payload['detected_emotion'] = ai_data['emotion']['dominant']
+                if ai_data.get('speech_pace', {}).get('is_passionate'):
+                    clip_payload['speech_is_passionate'] = True
+                if ai_data.get('audio_energy', {}).get('is_high_energy'):
+                    clip_payload['audio_is_high_energy'] = True
+                if ai_data.get('content', {}).get('is_hook_material'):
+                    clip_payload['is_hook_material'] = True
+            
             clips.append(clip_payload)
         
         if llm_analyses:
@@ -2714,15 +2810,27 @@ class ClipGenerator:
         - CPU-based video filters (for compatibility) with GPU encoding
         - NVIDIA NVENC encoder with optimized settings
         - Supports both H.264 and H.265 (HEVC) codecs
+        - Smart cropping for vertical formats (TikTok/Reels/Instagram)
         """
         output_path = os.path.join(output_dir, clip['filename'])
         
         # Build video filters for aspect ratio using instance resolution
         # Using CPU-based filters for better compatibility with GPU encoding
-        video_filters = [
-            f"scale=w={self.target_width}:h={self.target_height}:force_original_aspect_ratio=decrease",
-            f"pad={self.target_width}:{self.target_height}:(ow-iw)/2:(oh-ih)/2:black"
-        ]
+        if self.is_vertical:
+            # For vertical formats (9:16, 4:5): Scale to fill, then crop center
+            # This avoids ugly black bars on social media videos
+            video_filters = [
+                # Scale to fill: video fills entire frame (may overflow)
+                f"scale=w={self.target_width}:h={self.target_height}:force_original_aspect_ratio=increase",
+                # Crop to exact dimensions (center crop)
+                f"crop={self.target_width}:{self.target_height}:(iw-{self.target_width})/2:(ih-{self.target_height})/2"
+            ]
+        else:
+            # For landscape/square formats: Scale to fit, then pad if needed
+            video_filters = [
+                f"scale=w={self.target_width}:h={self.target_height}:force_original_aspect_ratio=decrease",
+                f"pad={self.target_width}:{self.target_height}:(ow-iw)/2:(oh-ih)/2:black"
+            ]
         
         composite_filter = ','.join(video_filters)
 
@@ -2803,10 +2911,19 @@ class ClipGenerator:
         """
         output_path = os.path.join(output_dir, clip['filename'])
         
-        video_filters = [
-            f"scale=w={self.target_width}:h={self.target_height}:force_original_aspect_ratio=decrease",
-            f"pad={self.target_width}:{self.target_height}:(ow-iw)/2:(oh-ih)/2:black"
-        ]
+        # Use same filter logic as GPU export
+        if self.is_vertical:
+            # For vertical formats (9:16, 4:5): Scale to fill, then crop center
+            video_filters = [
+                f"scale=w={self.target_width}:h={self.target_height}:force_original_aspect_ratio=increase",
+                f"crop={self.target_width}:{self.target_height}:(iw-{self.target_width})/2:(ih-{self.target_height})/2"
+            ]
+        else:
+            # For landscape/square formats: Scale to fit, then pad if needed
+            video_filters = [
+                f"scale=w={self.target_width}:h={self.target_height}:force_original_aspect_ratio=decrease",
+                f"pad={self.target_width}:{self.target_height}:(ow-iw)/2:(oh-ih)/2:black"
+            ]
         composite_filter = ','.join(video_filters)
         
         # Get thread count from config/env (default 8 for multi-core systems)

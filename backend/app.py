@@ -456,6 +456,12 @@ def process_video():
         if resolution not in Config.RESOLUTION_PRESETS:
             resolution = Config.DEFAULT_RESOLUTION
 
+        # Aspect ratio setting for TikTok/Reels/YouTube formats
+        aspect_ratio = data.get('aspect_ratio', '9:16')
+        valid_ratios = ['9:16', '4:5', '1:1', '16:9']
+        if aspect_ratio not in valid_ratios:
+            aspect_ratio = '9:16'  # Default to TikTok/Reels format
+
         backend_choice = str(data.get('transcription_backend', '') or '').strip().lower()
         overrides = {}
         if backend_choice in {'faster-whisper', 'openai-whisper'}:
@@ -535,7 +541,7 @@ def process_video():
                 hook_mode = None  # General mode - no specific hook style
             
             # Pass resolution and clipping_mode settings to ClipGenerator
-            clip_generator = ClipGenerator(filepath, Config, resolution=resolution)
+            clip_generator = ClipGenerator(filepath, Config, resolution=resolution, aspect_ratio=aspect_ratio)
             clips = clip_generator.generate_clips(
                 video_analysis,
                 audio_analysis,
@@ -640,6 +646,8 @@ def process_video():
                         'language': language,
                         'target_duration': target_duration,
                         'style': style,
+                        'resolution': resolution,
+                        'aspect_ratio': aspect_ratio,
                         'clipping_mode': clipping_mode,
                         'use_timoty_hooks': use_timoty_hooks,
                         'auto_caption': auto_caption

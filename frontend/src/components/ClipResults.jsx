@@ -54,6 +54,19 @@ function ClipResults({ clips, jobId, onReset }) {
     return emojis[category] || '🎬'
   }
 
+  const getEmotionEmoji = (emotion) => {
+    const emojis = {
+      excitement: '🤩',
+      urgency: '⚡',
+      controversy: '💥',
+      inspiration: '💪',
+      fear: '😰',
+      curiosity: '🤔',
+      humor: '😂'
+    }
+    return emojis[emotion] || '💭'
+  }
+
   const downloadAsset = async (assetName, label) => {
     if (!assetName) return
     try {
@@ -231,6 +244,32 @@ function ClipResults({ clips, jobId, onReset }) {
                     📝 Caption
                   </span>
                 )}
+                {clip.tiktok_caption && (
+                  <span className="px-2 py-0.5 text-[10px] rounded border border-pink-500/40 text-pink-300 bg-pink-500/10">
+                    📱 TikTok
+                  </span>
+                )}
+                {/* AI Enhancement Badges */}
+                {clip.audio_is_high_energy && (
+                  <span className="px-2 py-0.5 text-[10px] rounded border border-yellow-500/40 text-yellow-300 bg-yellow-500/10">
+                    🔊 High Energy
+                  </span>
+                )}
+                {clip.speech_is_passionate && (
+                  <span className="px-2 py-0.5 text-[10px] rounded border border-orange-500/40 text-orange-300 bg-orange-500/10">
+                    🎤 Passionate
+                  </span>
+                )}
+                {clip.detected_emotion && clip.detected_emotion !== 'neutral' && (
+                  <span className="px-2 py-0.5 text-[10px] rounded border border-cyan-500/40 text-cyan-300 bg-cyan-500/10">
+                    {getEmotionEmoji(clip.detected_emotion)} {clip.detected_emotion}
+                  </span>
+                )}
+                {clip.ai_boost > 0.1 && (
+                  <span className="px-2 py-0.5 text-[10px] rounded border border-green-500/40 text-green-300 bg-green-500/10">
+                    📈 +{Math.round(clip.ai_boost * 100)}%
+                  </span>
+                )}
               </div>
 
               <p className="text-xs text-white/70 line-clamp-2">
@@ -239,6 +278,12 @@ function ClipResults({ clips, jobId, onReset }) {
               {clip.timoty_hook && (
                 <p className="text-xs text-primary-200 line-clamp-2">
                   🔥 {clip.timoty_hook.text}
+                </p>
+              )}
+              {/* TikTok Caption Preview */}
+              {clip.tiktok_caption && (
+                <p className="text-[11px] text-pink-300 line-clamp-1">
+                  📱 {clip.tiktok_caption}
                 </p>
               )}
               {clip.caption_file && clip.caption_preview && (
@@ -381,6 +426,62 @@ function ClipResults({ clips, jobId, onReset }) {
                     >
                       📝 Download SRT
                     </button>
+                  </div>
+                )}
+
+                {/* Social Media Captions - LLM Generated */}
+                {(selectedClip.tiktok_caption || selectedClip.instagram_caption) && (
+                  <div className="p-4 glass rounded-lg space-y-3">
+                    <h4 className="font-semibold flex items-center gap-2">
+                      <span>📱</span>
+                      Social Media Captions
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-gradient-to-r from-pink-500 to-purple-500 text-white">
+                        AI Generated
+                      </span>
+                    </h4>
+                    
+                    {selectedClip.tiktok_caption && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-pink-300 font-medium">TikTok Caption:</span>
+                          <button
+                            onClick={() => handleCopyHook(selectedClip.tiktok_caption)}
+                            className="text-[10px] px-2 py-1 rounded bg-pink-500/20 text-pink-300 hover:bg-pink-500/30"
+                          >
+                            📋 Copy
+                          </button>
+                        </div>
+                        <p className="text-sm text-white/90 bg-black/30 rounded p-2">
+                          {selectedClip.tiktok_caption}
+                        </p>
+                      </div>
+                    )}
+                    
+                    {selectedClip.instagram_caption && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-purple-300 font-medium">Instagram Caption:</span>
+                          <button
+                            onClick={() => handleCopyHook(selectedClip.instagram_caption)}
+                            className="text-[10px] px-2 py-1 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30"
+                          >
+                            📋 Copy
+                          </button>
+                        </div>
+                        <p className="text-sm text-white/90 bg-black/30 rounded p-2">
+                          {selectedClip.instagram_caption}
+                        </p>
+                      </div>
+                    )}
+
+                    {selectedClip.recommended_hashtags && selectedClip.recommended_hashtags.length > 0 && (
+                      <div className="pt-2 border-t border-white/10">
+                        <span className="text-xs text-white/60">Hashtags: </span>
+                        <span className="text-xs text-cyan-300">
+                          {selectedClip.recommended_hashtags.map(h => `#${h}`).join(' ')}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 )}
 

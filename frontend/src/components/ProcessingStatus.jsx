@@ -11,6 +11,8 @@ function ProcessingStatus({ filename, jobId, settings, onComplete, onCancel }) {
     clips: []
   })
   const [eventLog, setEventLog] = useState([])
+  const [startTime, setStartTime] = useState(null)
+  const [eta, setEta] = useState(null)
   const pollRef = useRef(null)
   const hasLaunchedRef = useRef(false)
   const currentJobRef = useRef(null)
@@ -19,6 +21,23 @@ function ProcessingStatus({ filename, jobId, settings, onComplete, onCancel }) {
     const value = Number(status.progress) || 0
     return Math.min(Math.max(Math.round(value), 0), 100)
   }, [status.progress])
+
+  // Calculate ETA based on progress
+  useEffect(() => {
+    if (!startTime || progressPercent <= 5 || progressPercent >= 100) {
+      setEta(null)
+      return
+    }
+
+    const elapsed = (Date.now() - startTime) / 1000 // seconds
+    const remaining = progressPercent > 0 
+      ? (elapsed / progressPercent) * (100 - progressPercent)
+      : 0
+    
+    if (remaining > 0 && remaining < 7200) { // Cap at 2 hours
+      setEta(Math.round(remaining))
+    }
+  }, [progressPercent, startTime])
 
   // Reset saat jobId berubah (video baru diupload)
   useEffect(() => {
@@ -40,6 +59,7 @@ function ProcessingStatus({ filename, jobId, settings, onComplete, onCancel }) {
     if (hasLaunchedRef.current) return
 
     hasLaunchedRef.current = true
+    setStartTime(Date.now()) // Track start time for ETA
     launchProcessing()
     fetchStatus()
     pollRef.current = setInterval(fetchStatus, STATUS_POLL_INTERVAL)
@@ -57,6 +77,7 @@ function ProcessingStatus({ filename, jobId, settings, onComplete, onCancel }) {
         target_duration: settings.targetDuration,
         style: settings.style,
         resolution: settings.resolution || '1080p',
+        aspect_ratio: settings.aspectRatio || '9:16',
         clipping_mode: settings.clippingMode || 'general',
         use_timoty_hooks: settings.useTimotyHook,
         auto_caption: settings.autoCaption
@@ -169,6 +190,11 @@ function ProcessingStatus({ filename, jobId, settings, onComplete, onCancel }) {
               <div className="absolute inset-0 flex flex-col items-center justify-center">
                 <span className="text-5xl font-black text-white">{progressPercent}%</span>
                 <span className="text-white/50 text-sm">proses</span>
+                {eta && (
+                  <span className="text-primary-300 text-xs mt-1 animate-pulse">
+                    {formatEta(eta)}
+                  </span>
+                )}
               </div>
             </div>
 
@@ -192,6 +218,10 @@ function ProcessingStatus({ filename, jobId, settings, onComplete, onCancel }) {
               <div className="glass rounded-xl p-4 border border-white/10">
                 <p className="text-xs uppercase tracking-wide text-white/40">Resolusi</p>
                 <p className="text-base font-semibold text-white mt-1">{settings.resolution || '1080p'}</p>
+              </div>
+              <div className="glass rounded-xl p-4 border border-white/10">
+                <p className="text-xs uppercase tracking-wide text-white/40">Format Output</p>
+                <p className="text-base font-semibold text-white mt-1">{formatAspectRatio(settings.aspectRatio)}</p>
               </div>
               <div className="glass rounded-xl p-4 border border-white/10 col-span-2">
                 <p className="text-xs uppercase tracking-wide text-white/40">Mode Clipping</p>
@@ -298,6 +328,32 @@ function formatClippingMode(mode) {
     kalimasada: '📊 Kalimasada'
   }
   return mapping[mode] || 'General'
+}
+
+function formatAspectRatio(ratio) {
+  const mapping = {
+    '9:16': '📱 TikTok/Reels',
+    '4:5': '📷 IG Feed',
+    '1:1': '⬜ Square',
+    '16:9': '🖥️ YouTube'
+  }
+  return mapping[ratio] || '📱 TikTok/Reels'
+}
+
+function formatEta(seconds) {
+  if (!seconds || seconds <= 0) return null
+  
+  if (seconds < 60) {
+    return `~${seconds} detik lagi`
+  } else if (seconds < 3600) {
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return secs > 0 ? `~${mins}m ${secs}s lagi` : `~${mins} menit lagi`
+  } else {
+    const hours = Math.floor(seconds / 3600)
+    const mins = Math.floor((seconds % 3600) / 60)
+    return `~${hours}j ${mins}m lagi`
+  }
 }
 
 export default ProcessingStatus

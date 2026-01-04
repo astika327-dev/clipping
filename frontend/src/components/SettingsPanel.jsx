@@ -124,6 +124,40 @@ function SettingsPanel({ settings, onSettingsChange, onProcessStart, uploadedVid
           </p>
         </div>
 
+        {/* Output Format / Aspect Ratio */}
+        <div>
+          <label className="block text-sm font-medium mb-2">
+            Format Output (Aspect Ratio)
+          </label>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              { value: '9:16', label: 'TikTok/Reels', resolution: '1080x1920', emoji: '📱', color: '#ec4899' },
+              { value: '4:5', label: 'Instagram Feed', resolution: '1080x1350', emoji: '📷', color: '#8b5cf6' },
+              { value: '1:1', label: 'Square', resolution: '1080x1080', emoji: '⬜', color: '#06b6d4' },
+              { value: '16:9', label: 'YouTube', resolution: '1920x1080', emoji: '🖥️', color: '#22c55e' }
+            ].map((option) => (
+              <button
+                key={option.value}
+                onClick={() => onSettingsChange({ ...settings, aspectRatio: option.value })}
+                className="p-3 rounded-lg border-2 transition-all"
+                style={settings.aspectRatio === option.value ? {
+                  borderColor: option.color,
+                  backgroundColor: `${option.color}20`
+                } : {
+                  borderColor: 'rgba(255, 255, 255, 0.2)'
+                }}
+              >
+                <div className="text-2xl mb-1">{option.emoji}</div>
+                <div className="text-sm font-medium">{option.label}</div>
+                <div className="text-[10px] text-white/60">{option.resolution}</div>
+              </button>
+            ))}
+          </div>
+          <p className="text-white/50 text-xs mt-2">
+            📱 TikTok/Reels: Format vertikal paling populer. 🖥️ YouTube: Format landscape.
+          </p>
+        </div>
+
         {/* Clipping Mode */}
         <div>
           <label className="block text-sm font-medium mb-2">

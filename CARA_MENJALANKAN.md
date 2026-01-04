@@ -361,3 +361,5 @@ Jika ada masalah, cek section Troubleshooting atau buka issue di repository.
 touch ~/.no_auto_tmux
 
 exit
+
+aws ec2 stop-instances --instance-ids i-0c3cafec3afedba6d --region ap-southeast-1

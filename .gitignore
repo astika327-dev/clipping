@@ -45,6 +45,7 @@ Thumbs.db
 
 # Environment
 .env
+.env.*
 .env.local
 
 # Whisper models cache

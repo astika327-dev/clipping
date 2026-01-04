@@ -5,6 +5,28 @@ function ClipsPage() {
   const [clips, setClips] = useState([])
   const [loading, setLoading] = useState(true)
   const [selectedClips, setSelectedClips] = useState(new Set())
+  const [filterJob, setFilterJob] = useState('all')
+  const [sortBy, setSortBy] = useState('date_desc') // date_desc, date_asc, duration_desc, duration_asc
+  const [playingVideo, setPlayingVideo] = useState(null)
+
+  // Get unique job IDs for filter
+  const uniqueJobs = [...new Set(clips.map(c => c.jobId))]
+
+  // Filter and sort clips
+  const filteredClips = clips
+    .filter(c => filterJob === 'all' || c.jobId === filterJob)
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'date_asc':
+          return new Date(a.exportedAt) - new Date(b.exportedAt)
+        case 'duration_desc':
+          return (b.duration || 0) - (a.duration || 0)
+        case 'duration_asc':
+          return (a.duration || 0) - (b.duration || 0)
+        default: // date_desc
+          return new Date(b.exportedAt) - new Date(a.exportedAt)
+      }
+    })
 
   useEffect(() => {
     fetchAllClips()
@@ -126,10 +148,10 @@ function ClipsPage() {
   }
 
   const toggleSelectAll = () => {
-    if (selectedClips.size === clips.length) {
+    if (selectedClips.size === filteredClips.length) {
       setSelectedClips(new Set())
     } else {
-      setSelectedClips(new Set(clips.map(c => c.id)))
+      setSelectedClips(new Set(filteredClips.map(c => c.id)))
     }
   }
 
@@ -173,12 +195,54 @@ function ClipsPage() {
 
       {clips.length > 0 ? (
         <>
+          {/* Filter & Sort Bar */}
+          <div className="card flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between">
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Job Filter */}
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-white/60">Job:</label>
+                <select
+                  value={filterJob}
+                  onChange={(e) => setFilterJob(e.target.value)}
+                  className="input-field py-1.5 px-3 text-sm min-w-[140px]"
+                >
+                  <option value="all">Semua ({clips.length})</option>
+                  {uniqueJobs.map(job => (
+                    <option key={job} value={job}>
+                      {job.substring(0, 15)}... ({clips.filter(c => c.jobId === job).length})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Sort By */}
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-white/60">Sort:</label>
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                  className="input-field py-1.5 px-3 text-sm"
+                >
+                  <option value="date_desc">📅 Terbaru</option>
+                  <option value="date_asc">📅 Terlama</option>
+                  <option value="duration_desc">⏱️ Durasi Terpanjang</option>
+                  <option value="duration_asc">⏱️ Durasi Terpendek</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Stats */}
+            <div className="text-sm text-white/50">
+              Menampilkan {filteredClips.length} dari {clips.length} clips
+            </div>
+          </div>
+
           {/* Action Bar */}
           <div className="card flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
             <div className="flex items-center gap-3">
               <input
                 type="checkbox"
-                checked={selectedClips.size === clips.length && clips.length > 0}
+                checked={selectedClips.size === filteredClips.length && filteredClips.length > 0}
                 onChange={toggleSelectAll}
                 className="w-5 h-5 cursor-pointer"
               />
@@ -209,10 +273,10 @@ function ClipsPage() {
 
           {/* Clips Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {clips.map((clip) => (
+            {filteredClips.map((clip) => (
               <div
                 key={clip.id}
-                className={`card group cursor-pointer transition-all ${
+                className={`card group cursor-pointer transition-all relative ${
                   selectedClips.has(clip.id)
                     ? 'ring-2 ring-primary-500 bg-primary-500/10'
                     : 'hover:ring-2 hover:ring-primary-500/30'
@@ -228,10 +292,43 @@ function ClipsPage() {
                   />
                 </div>
 
-                {/* Video Preview */}
-                <div className="relative bg-black rounded-lg overflow-hidden mb-4 aspect-video flex items-center justify-center group">
-                  <div className="absolute inset-0 bg-gradient-to-br from-primary-500/20 to-accent-500/20"></div>
-                  <Play size={48} className="text-white/40 group-hover:text-white/70 transition" />
+                {/* Video Preview - Playable on Hover */}
+                <div 
+                  className="relative bg-black rounded-lg overflow-hidden mb-4 aspect-video flex items-center justify-center group"
+                  onMouseEnter={(e) => {
+                    const video = e.currentTarget.querySelector('video')
+                    if (video) {
+                      video.play().catch(() => {})
+                      setPlayingVideo(clip.id)
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    const video = e.currentTarget.querySelector('video')
+                    if (video) {
+                      video.pause()
+                      video.currentTime = 0
+                      setPlayingVideo(null)
+                    }
+                  }}
+                >
+                  <video
+                    src={`/api/preview/${clip.jobId}/${clip.filename}`}
+                    className="w-full h-full object-cover"
+                    muted
+                    loop
+                    playsInline
+                    preload="metadata"
+                  />
+                  {/* Play Overlay - hide when playing */}
+                  {playingVideo !== clip.id && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/30 group-hover:bg-black/10 transition-all">
+                      <Play size={48} className="text-white/60 group-hover:text-white group-hover:scale-110 transition-all" />
+                    </div>
+                  )}
+                  {/* Duration Badge */}
+                  <div className="absolute bottom-2 right-2 px-2 py-0.5 bg-black/80 rounded text-xs font-medium">
+                    {formatDuration(clip.duration)}
+                  </div>
                 </div>
 
                 {/* Clip Info */}

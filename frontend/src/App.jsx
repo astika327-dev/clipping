@@ -18,6 +18,7 @@ function App() {
     targetDuration: 'all',
     style: 'balanced',
     resolution: '1080p',
+    aspectRatio: '9:16',  // TikTok/Reels default format
     clippingMode: 'general',  // 'general', 'timoty', 'kalimasada'
     useTimotyHook: false,  // Now controlled by clippingMode
     autoCaption: false,
