@@ -161,6 +161,80 @@ class GroqLLM(LLMProvider):
             return ""
 
 
+class GeminiLLM(LLMProvider):
+    """Google Gemini LLM Provider - Free tier available!"""
+    
+    BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+    
+    # Available models (all FREE in free tier)
+    MODELS = {
+        'gemini-2.0-flash-exp': {'context': 1000000, 'speed': 'ultra_fast'},
+        'gemini-2.5-flash-preview-05-20': {'context': 1000000, 'speed': 'ultra_fast'},
+        'gemini-1.5-flash': {'context': 1000000, 'speed': 'very_fast'},
+        'gemini-1.5-pro': {'context': 2000000, 'speed': 'fast'},
+    }
+    
+    def __init__(self, api_key: str = None, model: str = 'gemini-2.0-flash-exp'):
+        super().__init__(api_key or os.environ.get('GEMINI_API_KEY', ''))
+        self.model = model
+        self.available = bool(self.api_key) and HTTPX_AVAILABLE
+        
+        if self.available:
+            print(f"   ✅ Gemini LLM initialized with model: {model}")
+        else:
+            if not self.api_key:
+                print("   ⚠️ Gemini LLM: No API key provided")
+            if not HTTPX_AVAILABLE:
+                print("   ⚠️ Gemini LLM: httpx not installed")
+    
+    def generate(self, prompt: str, system_prompt: str = None, temperature: float = 0.7,
+                 max_tokens: int = 2000) -> str:
+        """Generate response using Gemini API"""
+        if not self.available:
+            return ""
+        
+        # Combine system prompt with user prompt for Gemini
+        full_prompt = prompt
+        if system_prompt:
+            full_prompt = f"{system_prompt}\n\n{prompt}"
+        
+        url = f"{self.BASE_URL}/{self.model}:generateContent?key={self.api_key}"
+        
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(
+                    url,
+                    headers={"Content-Type": "application/json"},
+                    json={
+                        "contents": [{
+                            "parts": [{"text": full_prompt}]
+                        }],
+                        "generationConfig": {
+                            "temperature": temperature,
+                            "maxOutputTokens": max_tokens,
+                        }
+                    }
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    # Extract text from Gemini response
+                    candidates = data.get('candidates', [])
+                    if candidates:
+                        content = candidates[0].get('content', {})
+                        parts = content.get('parts', [])
+                        if parts:
+                            return parts[0].get('text', '')
+                    return ""
+                else:
+                    print(f"   ⚠️ Gemini API error: {response.status_code} - {response.text}")
+                    return ""
+                    
+        except Exception as e:
+            print(f"   ⚠️ Gemini API exception: {e}")
+            return ""
+
+
 class LLMIntelligence:
     """
     Main LLM Intelligence Engine
@@ -251,20 +325,38 @@ Berikan matching trends dan skor relevansi dalam format JSON."""
     def __init__(self, config=None):
         """Initialize LLM Intelligence with configuration"""
         self.config = config
+        self.llm = None
+        self.available = False
+        self.provider_name = "none"
         
-        # Get API key from config or environment
-        api_key = None
+        # Try Groq first
+        groq_key = None
         if config and hasattr(config, 'GROQ_API_KEY'):
-            api_key = config.GROQ_API_KEY
-        if not api_key:
-            api_key = os.environ.get('GROQ_API_KEY', '')
+            groq_key = config.GROQ_API_KEY
+        if not groq_key:
+            groq_key = os.environ.get('GROQ_API_KEY', '')
         
-        # Get LLM model preference
-        llm_model = os.environ.get('LLM_MODEL', 'llama-3.3-70b-versatile')
+        if groq_key:
+            llm_model = os.environ.get('LLM_MODEL', 'llama-3.3-70b-versatile')
+            self.llm = GroqLLM(api_key=groq_key, model=llm_model)
+            if self.llm.available:
+                self.available = True
+                self.provider_name = "Groq"
         
-        # Initialize Groq LLM
-        self.llm = GroqLLM(api_key=api_key, model=llm_model)
-        self.available = self.llm.available
+        # Fallback to Gemini if Groq not available
+        if not self.available:
+            gemini_key = None
+            if config and hasattr(config, 'GEMINI_API_KEY'):
+                gemini_key = config.GEMINI_API_KEY
+            if not gemini_key:
+                gemini_key = os.environ.get('GEMINI_API_KEY', '')
+            
+            if gemini_key:
+                gemini_model = os.environ.get('GEMINI_MODEL', 'gemini-1.5-flash')
+                self.llm = GeminiLLM(api_key=gemini_key, model=gemini_model)
+                if self.llm.available:
+                    self.available = True
+                    self.provider_name = "Gemini"
         
         # Rate limiting
         self.last_request_time = 0
@@ -274,7 +366,7 @@ Berikan matching trends dan skor relevansi dalam format JSON."""
         self._cache = {}
         
         if self.available:
-            print("   ✅ LLM Intelligence initialized successfully")
+            print(f"   ✅ LLM Intelligence initialized successfully ({self.provider_name})")
         else:
             print("   ⚠️ LLM Intelligence running in fallback mode (no API key)")
     
