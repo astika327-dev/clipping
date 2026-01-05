@@ -73,10 +73,12 @@ class VideoAnalyzer:
             
             # Analyze scenes with sampling optimization
             scene_analysis = self._analyze_scenes_optimized(scenes, metadata)
+            visual_windows = self._build_visual_windows(scene_analysis, duration)
             
             return {
                 'metadata': metadata,
                 'scenes': scene_analysis,
+                'visual_windows': visual_windows,
                 'total_scenes': len(scene_analysis),
                 'duration': duration,
                 'is_monolog': is_monolog,  # Enhanced flag for downstream processing
@@ -100,6 +102,7 @@ class VideoAnalyzer:
                     'aspect_ratio': '1920:1080'
                 },
                 'scenes': synthetic_scenes,
+                'visual_windows': self._build_visual_windows(synthetic_scenes, duration),
                 'total_scenes': len(synthetic_scenes),
                 'duration': duration,
                 'is_monolog': True
@@ -356,6 +359,64 @@ class VideoAnalyzer:
         cap.release()
         
         return scene_analysis
+
+    def _build_visual_windows(self, scenes: List[Dict], duration: float) -> List[Dict]:
+        """
+        Build coarse visual windows for audio-first merging.
+        Windows are lightweight summaries (no extra video decoding).
+        """
+        if not scenes or duration <= 0:
+            return []
+
+        window_seconds = float(getattr(self.config, 'VISUAL_WINDOW_SECONDS', 10))
+        step_ratio = float(getattr(self.config, 'VISUAL_WINDOW_STEP_RATIO', 0.5))
+        step = max(1.0, window_seconds * step_ratio)
+
+        windows = []
+        start = 0.0
+        while start < duration:
+            end = min(start + window_seconds, duration)
+            overlap_total = 0.0
+            sums = {
+                'face_count': 0.0,
+                'motion_score': 0.0,
+                'visual_engagement': 0.0,
+            }
+            bool_sums = {
+                'has_faces': 0.0,
+                'has_closeup': 0.0,
+                'has_high_motion': 0.0,
+                'is_talking': 0.0,
+            }
+            for scene in scenes:
+                overlap = min(end, scene.get('end_time', 0)) - max(start, scene.get('start_time', 0))
+                if overlap <= 0:
+                    continue
+                overlap_total += overlap
+                sums['face_count'] += scene.get('face_count', 1) * overlap
+                sums['motion_score'] += scene.get('motion_score', 0.3) * overlap
+                sums['visual_engagement'] += scene.get('visual_engagement', 0.5) * overlap
+                bool_sums['has_faces'] += float(bool(scene.get('has_faces', True))) * overlap
+                bool_sums['has_closeup'] += float(bool(scene.get('has_closeup', True))) * overlap
+                bool_sums['has_high_motion'] += float(bool(scene.get('has_high_motion', False))) * overlap
+                bool_sums['is_talking'] += float(bool(scene.get('is_talking', True))) * overlap
+
+            if overlap_total > 0:
+                windows.append({
+                    'start_time': start,
+                    'end_time': end,
+                    'duration': end - start,
+                    'face_count': sums['face_count'] / overlap_total,
+                    'motion_score': sums['motion_score'] / overlap_total,
+                    'visual_engagement': sums['visual_engagement'] / overlap_total,
+                    'has_faces': (bool_sums['has_faces'] / overlap_total) >= 0.5,
+                    'has_closeup': (bool_sums['has_closeup'] / overlap_total) >= 0.5,
+                    'has_high_motion': (bool_sums['has_high_motion'] / overlap_total) >= 0.5,
+                    'is_talking': (bool_sums['is_talking'] / overlap_total) >= 0.5,
+                })
+            start += step
+
+        return windows
     
     def _analyze_scene_segment_fast(self, cap, start_time: float, end_time: float, fps: float, num_samples: int = 5) -> Dict:
         """

@@ -550,8 +550,13 @@ def process_video():
                 hook_mode=hook_mode,
                 clipping_mode=clipping_mode
             )
-            
-            processing_status[job_id]['message'] = f'Ditemukan {len(clips)} klip potensial...'
+
+            quality_first = str(getattr(Config, 'CLIP_SELECTION_MODE', 'standard')).lower() == 'quality-first'
+            if quality_first and getattr(clip_generator, 'needs_review', False):
+                processing_status[job_id]['message'] = 'Quality-first: needs review (confidence rendah)'
+
+            if not (quality_first and getattr(clip_generator, 'needs_review', False)):
+                processing_status[job_id]['message'] = f'Ditemukan {len(clips)} klip potensial...'
             processing_status[job_id]['progress'] = 70
             
             if auto_caption:
@@ -578,7 +583,7 @@ def process_video():
                 min_clips = max(5, Config.FORCED_MIN_CLIP_OUTPUT)
                 emergency_segment_length = 25  # Standard segments
             
-            if len(clips) < min_clips:
+            if not quality_first and len(clips) < min_clips:
                 print(f"🚨 CRITICAL: Only {len(clips)} clips! Creating emergency clips for monolog...")
                 processing_status[job_id]['message'] = f'Membuat klip tambahan untuk monolog...'
                 

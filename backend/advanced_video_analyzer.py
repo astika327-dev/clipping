@@ -495,6 +495,10 @@ class AdvancedVideoAnalyzer:
             enhanced_scenes = self._enhance_scenes_with_dl(basic_result['scenes'], basic_result['metadata'])
             basic_result['scenes'] = enhanced_scenes
             basic_result['deep_learning_enabled'] = True
+            basic_result['visual_windows'] = self._build_visual_windows(
+                enhanced_scenes,
+                basic_result.get('duration', basic_result.get('metadata', {}).get('duration', 0))
+            )
             
             # Add overall deep learning stats
             dl_stats = self._calculate_dl_stats(enhanced_scenes)
@@ -684,6 +688,61 @@ class AdvancedVideoAnalyzer:
             'interview_scenes': sum(1 for s in scenes if s.get('is_interview', False)),
             'high_engagement_scenes': sum(1 for s in scenes if s.get('visual_engagement', 0) > 0.7)
         }
+
+    def _build_visual_windows(self, scenes: List[Dict], duration: float) -> List[Dict]:
+        """Build lightweight visual windows for audio-first merge."""
+        if not scenes or duration <= 0:
+            return []
+
+        window_seconds = float(getattr(self.config, 'VISUAL_WINDOW_SECONDS', 10))
+        step_ratio = float(getattr(self.config, 'VISUAL_WINDOW_STEP_RATIO', 0.5))
+        step = max(1.0, window_seconds * step_ratio)
+
+        windows = []
+        start = 0.0
+        while start < duration:
+            end = min(start + window_seconds, duration)
+            overlap_total = 0.0
+            sums = {
+                'face_count': 0.0,
+                'motion_score': 0.0,
+                'visual_engagement': 0.0,
+            }
+            bool_sums = {
+                'has_faces': 0.0,
+                'has_closeup': 0.0,
+                'has_high_motion': 0.0,
+                'is_talking': 0.0,
+            }
+            for scene in scenes:
+                overlap = min(end, scene.get('end_time', 0)) - max(start, scene.get('start_time', 0))
+                if overlap <= 0:
+                    continue
+                overlap_total += overlap
+                sums['face_count'] += scene.get('face_count', 1) * overlap
+                sums['motion_score'] += scene.get('motion_score', 0.3) * overlap
+                sums['visual_engagement'] += scene.get('visual_engagement', 0.5) * overlap
+                bool_sums['has_faces'] += float(bool(scene.get('has_faces', True))) * overlap
+                bool_sums['has_closeup'] += float(bool(scene.get('has_closeup', True))) * overlap
+                bool_sums['has_high_motion'] += float(bool(scene.get('has_high_motion', False))) * overlap
+                bool_sums['is_talking'] += float(bool(scene.get('is_talking', True))) * overlap
+
+            if overlap_total > 0:
+                windows.append({
+                    'start_time': start,
+                    'end_time': end,
+                    'duration': end - start,
+                    'face_count': sums['face_count'] / overlap_total,
+                    'motion_score': sums['motion_score'] / overlap_total,
+                    'visual_engagement': sums['visual_engagement'] / overlap_total,
+                    'has_faces': (bool_sums['has_faces'] / overlap_total) >= 0.5,
+                    'has_closeup': (bool_sums['has_closeup'] / overlap_total) >= 0.5,
+                    'has_high_motion': (bool_sums['has_high_motion'] / overlap_total) >= 0.5,
+                    'is_talking': (bool_sums['is_talking'] / overlap_total) >= 0.5,
+                })
+            start += step
+
+        return windows
     
     def cleanup(self):
         """Release all resources."""

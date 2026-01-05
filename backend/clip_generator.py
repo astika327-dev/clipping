@@ -229,6 +229,9 @@ class ClipGenerator:
         self.config = config
         self.clips = []
         self.hook_generator = TimotyHookGenerator()
+        self.needs_review = False
+        self.review_reason = ''
+        self.selection_mode = getattr(config, 'CLIP_SELECTION_MODE', 'standard').lower()
         
         # Initialize Enterprise Features
         self.enterprise_enabled = ENTERPRISE_FEATURES_AVAILABLE
@@ -394,14 +397,36 @@ class ClipGenerator:
             print(f"   Top 5 viral scores: {[round(s, 2) for s in top_scores]}")
         
         # Select best segments
-        selected = self._select_clips(scored_segments, target_duration)
+        quality_first = self.selection_mode == 'quality-first'
+        if quality_first:
+            min_score = float(getattr(self.config, 'QUALITY_FIRST_MIN_SCORE', 0.45))
+            min_conf = float(getattr(self.config, 'QUALITY_FIRST_MIN_CONFIDENCE', 0.5))
+            best_candidate = scored_segments[0] if scored_segments else None
+            if not best_candidate:
+                self.needs_review = True
+                self.review_reason = 'no_candidates'
+                print("Quality-first: no candidates. Marking needs_review.")
+                return []
+            if best_candidate.get('viral_score', 0) < min_score or best_candidate.get('selection_confidence', 0) < min_conf:
+                self.needs_review = True
+                self.review_reason = 'low_confidence'
+                print(f"Quality-first: best score {best_candidate.get('viral_score', 0):.2f} "
+                      f"conf {best_candidate.get('selection_confidence', 0):.2f}. Marking needs_review.")
+                return []
+        selected = self._select_clips(scored_segments, target_duration, quality_first=quality_first)
         print(f"📊 Selected segments: {len(selected)}")
         
         # GUARANTEE: If still 0, force create from any available data
-        forced_min = max(1, getattr(self.config, 'FORCED_MIN_CLIP_OUTPUT', 3))
-        if len(selected) < forced_min:
-            print(f"⚠️ Only {len(selected)} clips, need at least {forced_min}. Forcing creation...")
-            selected = self._guarantee_minimum_clips(selected, scored_segments, video_analysis, audio_analysis, forced_min)
+        if not quality_first:
+            forced_min = max(1, getattr(self.config, 'FORCED_MIN_CLIP_OUTPUT', 3))
+            if len(selected) < forced_min:
+                print(f"⚠️ Only {len(selected)} clips, need at least {forced_min}. Forcing creation...")
+                selected = self._guarantee_minimum_clips(selected, scored_segments, video_analysis, audio_analysis, forced_min)
+        elif not selected:
+            self.needs_review = True
+            self.review_reason = 'no_selection'
+            print("Quality-first: no selected clips. Marking needs_review.")
+            return []
         
         # CONTEXT SNAPPING: Adjust clip boundaries to align with sentence/speech breaks
         if audio_segments:
@@ -424,6 +449,11 @@ class ClipGenerator:
         
         # FINAL SAFETY CHECK
         if len(clips) == 0:
+            if quality_first:
+                self.needs_review = True
+                self.review_reason = 'no_final_clips'
+                print("Quality-first: 0 clips after metadata. Marking needs_review.")
+                return []
             print("🚨 CRITICAL: Still 0 clips! Creating absolute fallback...")
             clips = self._create_absolute_fallback_clips(video_analysis, audio_analysis)
         
@@ -577,12 +607,12 @@ class ClipGenerator:
     
     def _merge_analyses(self, video_analysis: Dict, audio_analysis: Dict) -> List[Dict]:
         """
-        Merge video scenes with audio segments.
-        For monologs/podcasts with few scene changes, use time-based fallback segmentation.
-        GUARANTEED to return segments if audio_segments exist.
+        Audio-first merge:
+        - Build windowed audio segments (sliding, transcript-aligned)
+        - Attach visual signals as secondary features (not boundaries)
         """
-        print("🔗 Merging video and audio analysis...")
-        
+        print("Merging audio windows with visual signals...")
+
         scenes = video_analysis.get('scenes', [])
         audio_segments = audio_analysis.get('analysis', {}).get('segment_scores', [])
         video_duration = (
@@ -590,138 +620,236 @@ class ClipGenerator:
             video_analysis.get('metadata', {}).get('duration', 0) or
             0
         )
-        
+
         # Fallback: estimate duration from audio segments if missing
         if video_duration <= 0 and audio_segments:
-            video_duration = max(seg.get('end', 0) for seg in audio_segments)
-            print(f"📏 Estimated video duration from audio: {video_duration:.1f}s")
-        
+            video_duration = max((seg.get('end', 0) for seg in audio_segments), default=0)
+            print(f"Estimated video duration from audio: {video_duration:.1f}s")
+
         merged = []
-        
-        for scene in scenes:
-            # Find overlapping audio segments
-            overlapping_audio = [
-                seg for seg in audio_segments
-                if self._segments_overlap(
-                    (scene['start_time'], scene['end_time']),
-                    (seg['start'], seg['end'])
-                )
-            ]
-            
-            if overlapping_audio:
-                # Combine text from overlapping segments
-                combined_text = ' '.join([seg.get('text', '') for seg in overlapping_audio])
-                
-                # Average audio scores
-                avg_audio_scores = self._average_audio_scores(overlapping_audio)
-                
-                merged.append({
-                    'start': scene['start_time'],
-                    'end': scene['end_time'],
-                    'duration': scene['duration'],
-                    'text': combined_text,
-                    'visual': {
-                        'has_faces': scene.get('has_faces', True),
-                        'face_count': scene.get('face_count', 1),
-                        'has_closeup': scene.get('has_closeup', True),
-                        'motion_score': scene.get('motion_score', 0.3),
-                        'has_high_motion': scene.get('has_high_motion', False),
-                        'visual_engagement': scene.get('visual_engagement', 0.5),
-                        'is_talking': scene.get('is_talking', True)  # Use DL result or default True
-                    },
-                    'speaker_left_ratio': scene.get('speaker_left_ratio', 0),
-                    'speaker_right_ratio': scene.get('speaker_right_ratio', 0),
-                    'is_conversation': scene.get('is_conversation', False),
-                    'dl_speaker_analysis': scene.get('dl_speaker_analysis', {}),
-                    'audio': avg_audio_scores
-                })
-        
-        print(f"📊 Scene-based segments: {len(merged)}")
-        
-        # ALWAYS create fallback segments for monolog/podcast (few or no scenes)
-        # This is the key fix - we need segments even when scenes are empty
-        if video_duration > 0 and audio_segments:
-            if len(merged) < 5:  # Always add fallback if fewer than 5 scene segments
-                print(f"⚠️  Few scenes detected ({len(merged)}). Creating time-based fallback for monolog/podcast...")
-                fallback_segments = self._create_time_based_segments(audio_segments, video_duration)
-                print(f"📊 Fallback segments created: {len(fallback_segments)}")
-                
-                # Add fallback segments that don't overlap too much with existing
-                for fb_seg in fallback_segments:
-                    is_unique = True
-                    for existing in merged:
-                        overlap = self._calculate_overlap_ratio(existing, fb_seg)
-                        if overlap > 0.5:
-                            is_unique = False
-                            break
-                    if is_unique:
-                        merged.append(fb_seg)
-                
-                merged = sorted(merged, key=lambda x: x['start'])
-        
+
+        audio_windows = self._build_audio_windows(audio_segments, video_duration)
+        for window in audio_windows:
+            start = window['start']
+            end = window['end']
+            text, avg_audio_scores, overlap_audio = self._slice_audio_by_time(
+                audio_segments, start, end
+            )
+            visual = self._aggregate_visual_signals(scenes, start, end)
+
+            merged.append({
+                'start': start,
+                'end': end,
+                'duration': end - start,
+                'text': text,
+                'visual': visual,
+                'speaker_left_ratio': visual.get('speaker_left_ratio', 0),
+                'speaker_right_ratio': visual.get('speaker_right_ratio', 0),
+                'is_conversation': visual.get('is_conversation', False),
+                'audio': avg_audio_scores,
+                'audio_segment_ids': [
+                    seg.get('segment_id', seg.get('id'))
+                    for seg in overlap_audio
+                    if seg.get('segment_id', seg.get('id')) is not None
+                ],
+                'is_audio_window': True
+            })
+
+        print(f"Audio windows created: {len(merged)}")
+
         # LAST RESORT: If still no segments, create from raw audio segments directly
         if not merged and audio_segments:
-            print("🆘 No segments found. Creating emergency segments from audio directly...")
+            print("No audio windows found. Creating emergency segments from audio directly...")
             merged = self._create_emergency_segments(audio_segments, video_duration)
-            
+
         # REFINEMENT: If we have detailed speaker timeline, refine segments based on turns
-        # This is key for 2-person podcasts to split "Q&A" or "Dialogue" correctly
-        merged = self._refine_segments_with_speaker_turns(merged, scenes)
-        
-        print(f"📊 Total merged segments: {len(merged)}")
+        merged = self._refine_segments_with_speaker_turns(merged, scenes, audio_segments)
+
+        print(f"Total merged segments: {len(merged)}")
         return merged
 
-    def _refine_segments_with_speaker_turns(self, segments: List[Dict], scenes: List[Dict]) -> List[Dict]:
+    def _build_audio_windows(self, audio_segments: List[Dict], video_duration: float) -> List[Dict]:
+        """
+        Build audio-first sliding windows aligned to transcript segments.
+        Windows are built by grouping contiguous transcript segments.
+        """
+        if not audio_segments:
+            return []
+
+        ranges = getattr(self.config, 'AUDIO_WINDOW_RANGES', None)
+        if not ranges:
+            ranges = getattr(self.config, 'CLIP_DURATIONS', [(9, 15), (18, 22), (28, 35), (40, 55)])
+
+        min_window = max(15.0, float(getattr(self.config, 'MIN_CLIP_DURATION', 8)))
+        max_window = float(getattr(self.config, 'MAX_CLIP_DURATION', 55))
+        max_window = max(max_window, max((r[1] for r in ranges), default=max_window))
+
+        stride = max(1, int(getattr(self.config, 'AUDIO_WINDOW_STRIDE_SEGMENTS', 1)))
+        max_windows = int(getattr(self.config, 'AUDIO_WINDOW_MAX_WINDOWS', 400))
+
+        windows = []
+        seen = set()
+        sorted_audio = sorted(audio_segments, key=lambda s: s.get('start', 0))
+
+        for i in range(0, len(sorted_audio), stride):
+            start = sorted_audio[i].get('start', 0)
+            if video_duration and start >= video_duration:
+                break
+
+            for j in range(i, len(sorted_audio)):
+                end = sorted_audio[j].get('end', start)
+                duration = end - start
+                if duration < min_window:
+                    continue
+                if duration > max_window:
+                    break
+                if not any(r[0] <= duration <= r[1] for r in ranges):
+                    continue
+
+                key = (round(start, 2), round(end, 2))
+                if key in seen:
+                    continue
+                windows.append({'start': start, 'end': end})
+                seen.add(key)
+                if len(windows) >= max_windows:
+                    return windows
+
+        return windows
+
+    def _slice_audio_by_time(
+        self,
+        audio_segments: List[Dict],
+        start: float,
+        end: float
+    ) -> Tuple[str, Dict, List[Dict]]:
+        """Collect transcript + scores for a time window."""
+        overlapping_audio = [
+            seg for seg in audio_segments
+            if self._segments_overlap((start, end), (seg.get('start', 0), seg.get('end', 0)))
+        ]
+        combined_text = ' '.join([seg.get('text', '') for seg in overlapping_audio]).strip()
+        avg_audio_scores = self._average_audio_scores(overlapping_audio)
+        return combined_text, avg_audio_scores, overlapping_audio
+
+    def _aggregate_visual_signals(self, scenes: List[Dict], start: float, end: float) -> Dict:
+        """Aggregate visual signals for a time window."""
+        defaults = {
+            'has_faces': True,
+            'face_count': 1.0,
+            'has_closeup': True,
+            'motion_score': 0.3,
+            'has_high_motion': False,
+            'visual_engagement': 0.5,
+            'is_talking': True,
+            'speaker_left_ratio': 0.0,
+            'speaker_right_ratio': 0.0,
+            'is_conversation': False
+        }
+        if not scenes:
+            return defaults
+
+        total = 0.0
+        sums = {
+            'face_count': 0.0,
+            'motion_score': 0.0,
+            'visual_engagement': 0.0,
+            'speaker_left_ratio': 0.0,
+            'speaker_right_ratio': 0.0,
+        }
+        bool_sums = {
+            'has_faces': 0.0,
+            'has_closeup': 0.0,
+            'has_high_motion': 0.0,
+            'is_talking': 0.0,
+            'is_conversation': 0.0,
+        }
+
+        for scene in scenes:
+            scene_start = scene.get('start_time', 0)
+            scene_end = scene.get('end_time', 0)
+            overlap = min(end, scene_end) - max(start, scene_start)
+            if overlap <= 0:
+                continue
+            total += overlap
+            sums['face_count'] += scene.get('face_count', defaults['face_count']) * overlap
+            sums['motion_score'] += scene.get('motion_score', defaults['motion_score']) * overlap
+            sums['visual_engagement'] += scene.get('visual_engagement', defaults['visual_engagement']) * overlap
+            sums['speaker_left_ratio'] += scene.get('speaker_left_ratio', 0.0) * overlap
+            sums['speaker_right_ratio'] += scene.get('speaker_right_ratio', 0.0) * overlap
+
+            bool_sums['has_faces'] += float(bool(scene.get('has_faces', defaults['has_faces']))) * overlap
+            bool_sums['has_closeup'] += float(bool(scene.get('has_closeup', defaults['has_closeup']))) * overlap
+            bool_sums['has_high_motion'] += float(bool(scene.get('has_high_motion', defaults['has_high_motion']))) * overlap
+            bool_sums['is_talking'] += float(bool(scene.get('is_talking', defaults['is_talking']))) * overlap
+            bool_sums['is_conversation'] += float(bool(scene.get('is_conversation', defaults['is_conversation']))) * overlap
+
+        if total <= 0:
+            return defaults
+
+        visual = {
+            'face_count': sums['face_count'] / total,
+            'motion_score': sums['motion_score'] / total,
+            'visual_engagement': sums['visual_engagement'] / total,
+            'speaker_left_ratio': sums['speaker_left_ratio'] / total,
+            'speaker_right_ratio': sums['speaker_right_ratio'] / total,
+        }
+        visual.update({
+            'has_faces': (bool_sums['has_faces'] / total) >= 0.5,
+            'has_closeup': (bool_sums['has_closeup'] / total) >= 0.5,
+            'has_high_motion': (bool_sums['has_high_motion'] / total) >= 0.5,
+            'is_talking': (bool_sums['is_talking'] / total) >= 0.5,
+            'is_conversation': (bool_sums['is_conversation'] / total) >= 0.5
+        })
+
+        return visual
+
+    def _refine_segments_with_speaker_turns(
+        self,
+        segments: List[Dict],
+        scenes: List[Dict],
+        audio_segments: List[Dict]
+    ) -> List[Dict]:
         """
         Refine segments by splitting them at speaker transitions (turns).
         Uses the 'speaker_timeline' from AdvancedVideoAnalyzer.
         """
         if not segments or not scenes:
             return segments
-            
-        print("   👥 Refining segments based on speaker turns...")
+
+        print("Refining segments based on speaker turns...")
         refined = []
-        
-        # Helper to find scene for a segment
+
         def get_scene_for_segment(seg):
             mid = (seg['start'] + seg['end']) / 2
             for sc in scenes:
                 if sc['start_time'] <= mid <= sc['end_time']:
                     return sc
             return None
-        
+
         for seg in segments:
             scene = get_scene_for_segment(seg)
             timeline = scene.get('dl_speaker_analysis', {}).get('timeline', []) if scene else []
-            
+
             if not timeline or len(timeline) < 2:
                 refined.append(seg)
                 continue
-            
-            # Helper to check if a timestamp falls in this segment
+
             seg_start = seg['start']
             seg_end = seg['end']
-            
-            # Get valid timeline points for this segment
+
             valid_points = [p for p in timeline if seg_start <= p['timestamp'] <= seg_end]
-            
+
             if not valid_points:
                 refined.append(seg)
                 continue
-                
-            # Detect turns: Left (Active) vs Right (Active)
-            # We look for sustained blocks of one speaker
+
             transitions = []
-            
-            # Smooth out state using a sliding window? 
-            # Simple approach: Find change in dominant speaker
-            current_speaker = None # 'left', 'right', 'both', 'none'
+            current_speaker = None
             last_switch_time = seg_start
-            
+
             for point in valid_points:
                 ts = point['timestamp']
-                
-                # Determine state at this point
+
                 state = 'none'
                 if point.get('active_left') and point.get('active_right'):
                     state = 'both'
@@ -729,52 +857,54 @@ class ClipGenerator:
                     state = 'left'
                 elif point.get('active_right'):
                     state = 'right'
-                
-                if state == 'none': continue
-                
+
+                if state == 'none':
+                    continue
+
                 if current_speaker is None:
                     current_speaker = state
                     last_switch_time = ts
-                elif state != current_speaker and state != 'both': # 'both' maintains current context usually
-                    # Potential switch found
-                    # Only register if duration since last switch is meaningful (> 10s)
+                elif state != current_speaker and state != 'both':
                     if ts - last_switch_time > 10.0:
                         transitions.append(ts)
                         current_speaker = state
                         last_switch_time = ts
-            
+
             if not transitions:
                 refined.append(seg)
                 continue
-            
-            # Split segment at transitions
+
             current_start = seg_start
-            print(f"      ✂️ Splitting segment {seg_start:.1f}-{seg_end:.1f} at speaker turns: {[round(t,1) for t in transitions]}")
-            
-            # Split text? We can't easily split text without re-aligning words. 
-            # So we duplicate the text/audio metadata but adjust times. 
-            # Ideally we would re-fetch text for the new time range, but we don't have that granularity easily.
-            # Best effort: Just adjust times and hope audio alignment works later or is permissive.
-            # Actually, `clip_generator` downstream uses `start`/`end` to strip audio/video. 
-            # The text in metadata is mostly for analysis/title.
-            
+            print(f"Splitting segment {seg_start:.1f}-{seg_end:.1f} at speaker turns: {[round(t,1) for t in transitions]}")
+
             split_points = transitions + [seg_end]
-            
+
             for split_ts in split_points:
-                if split_ts - current_start < 15.0: # Ignore slivers < 15s (keep context)
+                if split_ts - current_start < 15.0:
                     continue
-                    
+
+                new_text, new_audio_scores, overlap_audio = self._slice_audio_by_time(
+                    audio_segments, current_start, split_ts
+                )
+                new_visual = self._aggregate_visual_signals(scenes, current_start, split_ts)
+
                 new_seg = seg.copy()
                 new_seg['start'] = current_start
                 new_seg['end'] = split_ts
                 new_seg['duration'] = split_ts - current_start
                 new_seg['split_by_turn'] = True
-                new_seg['text'] = f"[Speaker Turn] {seg.get('text', '')}" # Marker
+                new_seg['text'] = new_text or seg.get('text', '')
+                new_seg['audio'] = new_audio_scores
+                new_seg['visual'] = new_visual
+                new_seg['audio_segment_ids'] = [
+                    s.get('segment_id', s.get('id'))
+                    for s in overlap_audio
+                    if s.get('segment_id', s.get('id')) is not None
+                ]
                 refined.append(new_seg)
                 current_start = split_ts
-                
+
         return refined
-    
     def _snap_to_context_boundaries(self, segments: List[Dict], audio_segments: List[Dict]) -> List[Dict]:
         """
         Intelligently adjust segment boundaries like a skilled editor with high IQ/EQ.
@@ -1942,7 +2072,8 @@ class ClipGenerator:
         for segment in segments:
             # Calculate base viral score
             viral_score = self._calculate_viral_score(segment, style)
-            
+            base_score = viral_score
+
             # HIGH IQ ANALYSIS: Narrative context
             narrative_context = self._analyze_narrative_context(segment, segments)
             
@@ -2079,6 +2210,18 @@ class ClipGenerator:
                     platform='tiktok'
                 )
             
+            max_bonus = float(getattr(self.config, 'SCORE_BONUS_CAP', 0.35))
+            max_penalty = float(getattr(self.config, 'SCORE_PENALTY_CAP', 0.3))
+            delta = viral_score - base_score
+            delta = max(-max_penalty, min(delta, max_bonus))
+            viral_score = base_score + delta
+            viral_score = max(0.0, min(self._logistic_scale(viral_score, k=4.0, midpoint=0.6), 1.0))
+
+            selection_confidence = (
+                semantic_validation.get('confidence', 0.5) * 0.6 +
+                narrative_context.get('narrative_strength', 0.5) * 0.4
+            )
+
             scored.append({
                 **segment,
                 'viral_score': min(1.0, max(0.0, viral_score)),
@@ -2088,6 +2231,7 @@ class ClipGenerator:
                 'content_type': content_type,
                 'creator_style': creator_style,
                 'semantic_context': semantic_validation,
+                'selection_confidence': selection_confidence,
                 'enterprise_metrics': enterprise_metrics,
                 'engagement_prediction': engagement_prediction
             })
@@ -2125,137 +2269,133 @@ class ClipGenerator:
         
         return scored
     
+    def _cap_bonus(self, value: float, cap: float) -> float:
+        return min(value, cap)
+
+    def _logistic_scale(self, value: float, k: float = 4.0, midpoint: float = 0.6) -> float:
+        """Smooth score to reduce saturation while keeping 0-1 range."""
+        import math
+        value = max(0.0, min(1.0, value))
+        low = 1.0 / (1.0 + math.exp(-k * (0.0 - midpoint)))
+        high = 1.0 / (1.0 + math.exp(-k * (1.0 - midpoint)))
+        scaled = 1.0 / (1.0 + math.exp(-k * (value - midpoint)))
+        if high == low:
+            return value
+        return (scaled - low) / (high - low)
+
     def _calculate_viral_score(self, segment: Dict, style: str) -> float:
         """
-        Calculate viral potential score (0-1)
-        Enhanced for better viral detection with aggressive weighting.
-        Special boost for fallback segments (monolog/podcast).
+        Calculate viral potential score (0-1) with normalized buckets and capped bonuses.
         """
         visual = segment['visual']
         audio = segment['audio']
+        text = segment.get('text', '') or ''
+        duration = segment.get('duration', 0)
         is_fallback = segment.get('is_fallback', False)
-        
-        # Fallback boost: for monolog/podcast, be more lenient with scoring
-        fallback_multiplier = 1.2 if is_fallback else 1.0
-        
-        # Enhanced base scores with higher weights for viral indicators
-        hook_strength = audio.get('hook', 0) * 0.35  # Increased from 0.30
-        audio_engagement = audio.get('engagement', 0) * 0.25  # Increased from 0.15
-        
-        # Content value with money and urgency keywords
+
+        hook = min(max(audio.get('hook', 0), 0), 1)
+        audio_engagement = min(max(audio.get('engagement', 0), 0), 1)
+        visual_engagement = min(max(visual.get('visual_engagement', 0), 0), 1)
+
         content_value = (
-            audio.get('emotional', 0) * 0.12 +  # Increased from 0.10
-            audio.get('educational', 0) * 0.08 +
-            audio.get('entertaining', 0) * 0.08 +  # Increased from 0.07
-            audio.get('controversial', 0) * 0.05 +
-            audio.get('money', 0) * 0.10 +
-            audio.get('urgency', 0) * 0.10
+            audio.get('emotional', 0) * 0.25 +
+            audio.get('educational', 0) * 0.18 +
+            audio.get('entertaining', 0) * 0.18 +
+            audio.get('controversial', 0) * 0.10 +
+            audio.get('money', 0) * 0.15 +
+            audio.get('urgency', 0) * 0.14
         )
-        
-        # Visual engagement with higher priority
-        visual_engagement = visual.get('visual_engagement', 0) * 0.25  # Increased from 0.20
-        
-        # For fallback (talking head), reduce visual penalty
-        if is_fallback and visual.get('has_faces'):
-            visual_engagement += 0.15  # Boost for assumed talking head
-        
-        # Pacing score - prefer shorter, punchier clips
-        if segment['duration'] <= 15:
-            pacing = 0.15  # Short clips get higher score
-        elif segment['duration'] <= 25:
-            pacing = 0.10
+        content_value = min(1.0, max(0.0, content_value))
+
+        # Pacing score - prefer punchy clips but allow longer context
+        if duration <= 15:
+            pacing_score = 1.0
+        elif duration <= 25:
+            pacing_score = 0.8
+        elif duration <= 35:
+            pacing_score = 0.6
         else:
-            pacing = 0.05
-        
-        # Style-specific bonuses (increased)
-        style_bonus = 0
+            pacing_score = 0.4
+
+        # Style score normalized
+        style_score = 0.0
         if style == 'funny':
-            style_bonus = audio.get('entertaining', 0) * 0.15
+            style_score = audio.get('entertaining', 0)
         elif style == 'educational':
-            style_bonus = audio.get('educational', 0) * 0.15
+            style_score = audio.get('educational', 0)
         elif style == 'dramatic':
-            style_bonus = audio.get('emotional', 0) * 0.15
+            style_score = audio.get('emotional', 0)
         elif style == 'controversial':
-            style_bonus = audio.get('controversial', 0) * 0.15
+            style_score = audio.get('controversial', 0)
         elif style == 'balanced':
-            # For balanced, use average of all content scores
-            style_bonus = (audio.get('entertaining', 0) + audio.get('educational', 0) + 
-                          audio.get('emotional', 0)) / 3 * 0.10
-        
-        # Visual bonuses - more aggressive
-        visual_bonus = 0
+            style_score = (
+                audio.get('entertaining', 0) +
+                audio.get('educational', 0) +
+                audio.get('emotional', 0)
+            ) / 3
+        style_score = min(1.0, max(0.0, style_score))
+
+        # Bonus bucket (capped)
+        bonus_bucket = 0.0
         if visual.get('has_closeup'):
-            visual_bonus += 0.08  # Increased from 0.05
+            bonus_bucket += 0.05
         if visual.get('has_high_motion'):
-            visual_bonus += 0.08  # Increased from 0.05
+            bonus_bucket += 0.05
         if visual.get('has_faces'):
-            visual_bonus += 0.05
-        
-        # Ghost speaker check variables (penalty applied after total_score is calculated)
-        is_talking_visual = visual.get('is_talking', True)  # Default true if missing
+            bonus_bucket += 0.03
+        if text and '?' in text:
+            bonus_bucket += 0.03
+        if text:
+            import re
+            if re.search(r'\d+', text):
+                bonus_bucket += 0.03
+        bonus_bucket += audio.get('mental_slap', 0) * 0.08
+        bonus_bucket += audio.get('meta_topic_strength', 0) * 0.06
+        if is_fallback and visual.get('has_faces'):
+            bonus_bucket += 0.05
+        bonus_bucket = self._cap_bonus(bonus_bucket, 0.18)
+
+        # WPM adjustment (small)
+        duration_mins = max(duration, 1) / 60.0
+        word_count = len(text.split())
+        wpm = word_count / duration_mins
+        if 130 <= wpm <= 190:
+            bonus_bucket += 0.04
+        elif wpm < 100 or wpm > 220:
+            bonus_bucket -= 0.04
+        bonus_bucket = self._cap_bonus(max(bonus_bucket, 0.0), 0.20)
+
+        penalty_bucket = audio.get('rare_topic', 0) * 0.15
+        penalty_bucket = self._cap_bonus(penalty_bucket, 0.12)
+
+        base_score = (
+            hook * 0.28 +
+            content_value * 0.26 +
+            visual_engagement * 0.18 +
+            audio_engagement * 0.12 +
+            pacing_score * 0.08 +
+            style_score * 0.08
+        )
+
+        total_score = base_score + bonus_bucket - penalty_bucket
+
+        # Ghost speaker penalty (visual not talking but audio active)
+        is_talking_visual = visual.get('is_talking', True)
         has_ghost_speaker_issue = (
-            not is_talking_visual and 
-            not is_fallback and 
-            visual.get('has_faces') and 
+            not is_talking_visual and
+            not is_fallback and
+            visual.get('has_faces') and
             visual.get('face_count', 0) > 0
         )
-        
-        # ENTERPRISE: Pacing Score (WPM)
-        # Favor energetic delivery (130-180 WPM)
-        duration_mins = max(segment['duration'], 1) / 60.0
-        word_count = len(segment.get('text', '').split())
-        wpm = word_count / duration_mins
-        
-        if 130 <= wpm <= 190:
-            content_value += 0.08 # Sweet spot
-        elif wpm < 100:
-            content_value -= 0.05 # Too slow/boring
-        elif wpm > 220:
-            content_value -= 0.05 # Too fast/unclear
-
-        
-        # Check for questions (high engagement)
-        if segment.get('text') and '?' in segment['text']:
-            audio_engagement += 0.05
-        
-        # Check for numbers/stats (credibility boost)
-        if segment.get('text'):
-            import re
-            if re.search(r'\d+', segment['text']):
-                content_value += 0.05
-        
-        relatability_bonus = (
-            audio.get('mental_slap', 0) * 0.2 +
-            audio.get('meta_topic_strength', 0) * 0.15
-        )
-
-        rare_topic_penalty = audio.get('rare_topic', 0) * 0.2
-
-        total_score = (
-            hook_strength +
-            content_value +
-            visual_engagement +
-            audio_engagement +
-            pacing +
-            style_bonus +
-            visual_bonus +
-            relatability_bonus -
-            rare_topic_penalty
-        )
-        
-        # Apply fallback multiplier to boost monolog/podcast scores slightly
-        total_score *= fallback_multiplier
-        
-        # ENTERPRISE: Apply Ghost Speaker Penalty (visual not talking but audio active)
         if has_ghost_speaker_issue:
-            total_score *= 0.65  # Heavy penalty for off-screen speaker focus
+            total_score *= 0.7
 
         if is_fallback:
-            fallback_floor = getattr(self.config, 'FALLBACK_VIRAL_SCORE', 0.15) + 0.05
+            fallback_floor = getattr(self.config, 'FALLBACK_VIRAL_SCORE', 0.15)
             total_score = max(total_score, fallback_floor)
-        
-        return max(0.0, min(total_score, 1.0))
-    
+
+        total_score = max(0.0, min(total_score, 1.0))
+        return max(0.0, min(self._logistic_scale(total_score, k=4.0, midpoint=0.6), 1.0))
     def _determine_category(self, segment: Dict) -> str:
         """Determine the primary category of the segment"""
         audio = segment['audio']
@@ -2285,7 +2425,7 @@ class ClipGenerator:
             return 'extended'
         return 'extended'
     
-    def _select_clips(self, scored_segments: List[Dict], target_duration: str) -> List[Dict]:
+    def _select_clips(self, scored_segments: List[Dict], target_duration: str, quality_first: bool = False) -> List[Dict]:
         """Select clip segments quickly while guaranteeing minimum output."""
         print(f"🎯 Selecting clips (target: {target_duration})...")
         
@@ -2303,6 +2443,7 @@ class ClipGenerator:
         def duration_ok(segment: Dict) -> bool:
             return segment.get('duration', 0) >= min_duration
 
+        allow_fallback = bool(getattr(self.config, 'QUALITY_FIRST_ALLOW_FALLBACK', False)) if quality_first else True
         fallback_segments = [
             s for s in scored_segments
             if s.get('is_fallback') and duration_ok(s)
@@ -2329,7 +2470,7 @@ class ClipGenerator:
             print(f"   Using all scored segments: {len(candidates)}")
 
         # Give priority to fallback monolog segments when no standard candidates available
-        if fallback_segments and len(candidates) < getattr(self.config, 'MIN_CLIP_OUTPUT', 5):
+        if allow_fallback and fallback_segments and len(candidates) < getattr(self.config, 'MIN_CLIP_OUTPUT', 5):
             # extend while preserving order and avoiding duplicates
             seen_ids = set(id(seg) for seg in candidates)
             for seg in fallback_segments:
@@ -2341,10 +2482,12 @@ class ClipGenerator:
             print(f"   After adding fallback priority: {len(candidates)}")
 
         max_clips = max(1, getattr(self.config, 'MAX_CLIPS_PER_VIDEO', 15))
-        min_required = min(max_clips, max(1, getattr(self.config, 'MIN_CLIP_OUTPUT', 3)))
+        min_required = 0 if quality_first else min(max_clips, max(1, getattr(self.config, 'MIN_CLIP_OUTPUT', 3)))
         target_goal = min(max_clips, max(min_required, getattr(self.config, 'TARGET_CLIP_COUNT', min_required)))
 
         base_threshold = getattr(self.config, 'MIN_VIRAL_SCORE', 0.10)
+        if quality_first:
+            base_threshold = max(base_threshold, float(getattr(self.config, 'QUALITY_FIRST_MIN_SCORE', base_threshold)))
         relaxed_threshold = max(getattr(self.config, 'RELAXED_VIRAL_SCORE', 0.05), 0.0)
         fallback_threshold = max(getattr(self.config, 'FALLBACK_VIRAL_SCORE', 0.01), 0.0)
 
@@ -2384,13 +2527,13 @@ class ClipGenerator:
             (0.0, max_clips),  # ZERO threshold as final attempt
         ):
             pick(threshold, limit)
-            if len(selected) >= min_required:
+            if not quality_first and len(selected) >= min_required:
                 break
         
         print(f"   After threshold passes: {len(selected)} selected")
 
         # Force minimum if still not enough
-        if len(selected) < min_required and candidates:
+        if not quality_first and len(selected) < min_required and candidates:
             print(f"   Forcing minimum output...")
             fallback_sorted = sorted(candidates, key=lambda item: item.get('viral_score', 0), reverse=True)
             for segment in fallback_sorted:
@@ -2412,18 +2555,19 @@ class ClipGenerator:
                 selected.append(segment)
                 seen_keys.add(key)
 
-        forced_min = max(1, getattr(self.config, 'FORCED_MIN_CLIP_OUTPUT', 3))
-        if len(selected) < forced_min:
-            forced = self._force_minimum_output(
-                selected,
-                candidates,
-                fallback_segments,
-                forced_min,
-                min_duration,
-                max_clips,
-                seen_keys,
-            )
-            selected.extend(forced)
+        if not quality_first:
+            forced_min = max(1, getattr(self.config, 'FORCED_MIN_CLIP_OUTPUT', 3))
+            if len(selected) < forced_min:
+                forced = self._force_minimum_output(
+                    selected,
+                    candidates,
+                    fallback_segments,
+                    forced_min,
+                    min_duration,
+                    max_clips,
+                    seen_keys,
+                )
+                selected.extend(forced)
 
         print(f"   Final selection: {len(selected)} clips")
         return selected

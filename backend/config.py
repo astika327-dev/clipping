@@ -126,8 +126,24 @@ class Config:
         (28, 35),  # Long clips - extended upper bound
         (40, 55),  # Extended clips - for context-rich podcast content
     ]
+    # Audio-first windowing (transcript-aligned)
+    AUDIO_WINDOW_RANGES = CLIP_DURATIONS
+    AUDIO_WINDOW_STRIDE_SEGMENTS = int(os.environ.get('AUDIO_WINDOW_STRIDE_SEGMENTS', 1))
+    AUDIO_WINDOW_MAX_WINDOWS = int(os.environ.get('AUDIO_WINDOW_MAX_WINDOWS', 400))
+    VISUAL_WINDOW_SECONDS = float(os.environ.get('VISUAL_WINDOW_SECONDS', 10))
+    VISUAL_WINDOW_STEP_RATIO = float(os.environ.get('VISUAL_WINDOW_STEP_RATIO', 0.5))
     MIN_CLIP_DURATION = 8  # Lowered from 9 for more flexibility
     MAX_CLIP_DURATION = 55  # Increased from 35 for extended clips
+
+    # Clip selection modes
+    CLIP_SELECTION_MODE = os.environ.get('CLIP_SELECTION_MODE', 'standard').lower()  # standard | quality-first
+    QUALITY_FIRST_MIN_SCORE = float(os.environ.get('QUALITY_FIRST_MIN_SCORE', 0.45))
+    QUALITY_FIRST_MIN_CONFIDENCE = float(os.environ.get('QUALITY_FIRST_MIN_CONFIDENCE', 0.5))
+    QUALITY_FIRST_ALLOW_FALLBACK = os.environ.get('QUALITY_FIRST_ALLOW_FALLBACK', 'false').lower() == 'true'
+
+    # Score normalization caps
+    SCORE_BONUS_CAP = float(os.environ.get('SCORE_BONUS_CAP', 0.35))
+    SCORE_PENALTY_CAP = float(os.environ.get('SCORE_PENALTY_CAP', 0.3))
     
     # Scoring thresholds - VERY LENIENT for monolog/podcast support
     MIN_VIRAL_SCORE = 0.08  # Lowered further for monolog

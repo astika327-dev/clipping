@@ -785,10 +785,104 @@ class AudioAnalyzer:
         }
     
     def _extract_words(self, text: str) -> List[str]:
-        """Extract clean words from text"""
-        # Remove punctuation and convert to lowercase
-        words = re.findall(r'\b\w+\b', text.lower())
-        return words
+        """Extract normalized tokens from text."""
+        return self._tokenize(text)
+
+    def _normalize_text(self, text: str) -> str:
+        """Normalize text for keyword/phrase matching."""
+        if not text:
+            return ''
+        lowered = text.lower()
+        normalized = re.sub(r'[^a-z0-9\s]', ' ', lowered)
+        return re.sub(r'\s+', ' ', normalized).strip()
+
+    def _tokenize(self, text: str) -> List[str]:
+        """Tokenize normalized text into words."""
+        normalized = self._normalize_text(text)
+        return [tok for tok in normalized.split() if tok]
+
+    def _simple_stem(self, token: str) -> str:
+        """
+        Lightweight stemming for Indonesian/English without external deps.
+        Keeps it conservative to avoid over-stemming.
+        """
+        if not token or len(token) <= 3:
+            return token
+
+        # Common Indonesian enclitics
+        for suffix in ('lah', 'kah', 'tah', 'pun', 'nya', 'ku', 'mu'):
+            if token.endswith(suffix) and len(token) > len(suffix) + 2:
+                token = token[: -len(suffix)]
+                break
+
+        # Indonesian derivational suffixes
+        for suffix in ('kan', 'an', 'i'):
+            if token.endswith(suffix) and len(token) > len(suffix) + 3:
+                token = token[: -len(suffix)]
+                break
+
+        # Simple English suffixes
+        for suffix in ('ing', 'ed', 'es', 's'):
+            if token.endswith(suffix) and len(token) > len(suffix) + 3:
+                token = token[: -len(suffix)]
+                break
+
+        return token
+
+    def _stem_tokens(self, tokens: List[str]) -> List[str]:
+        return [self._simple_stem(tok) for tok in tokens]
+
+    def _split_keywords(self, keywords: List[str]) -> Tuple[List[str], List[str]]:
+        """Separate single-token keywords from multi-word phrases."""
+        tokens = []
+        phrases = []
+        for kw in keywords or []:
+            if not kw:
+                continue
+            if ' ' in kw.strip():
+                phrases.append(kw.strip().lower())
+            else:
+                tokens.append(kw.strip().lower())
+        return tokens, phrases
+
+    def _count_phrase_matches(self, stemmed_text: str, phrases: List[str]) -> int:
+        if not stemmed_text or not phrases:
+            return 0
+        matches = 0
+        for phrase in phrases:
+            phrase_tokens = [self._simple_stem(tok) for tok in phrase.split()]
+            if not phrase_tokens:
+                continue
+            pattern = r'\b' + r'\s+'.join(map(re.escape, phrase_tokens)) + r'\b'
+            found = re.findall(pattern, stemmed_text)
+            matches += len(found)
+        return matches
+
+    def _keyword_scores(self, text: str, tokens: List[str], keywords: List[str]) -> Dict[str, float]:
+        """
+        Compute separate token and phrase scores to avoid bias.
+        Returns token_score, phrase_score, combined.
+        """
+        token_keywords, phrase_keywords = self._split_keywords(keywords)
+        stemmed_tokens = self._stem_tokens(tokens)
+        stemmed_text = ' '.join(stemmed_tokens)
+
+        token_matches = sum(1 for tok in stemmed_tokens if tok in token_keywords)
+        phrase_matches = self._count_phrase_matches(stemmed_text, phrase_keywords)
+
+        token_score = min(token_matches / 3.0, 1.0)
+        phrase_score = min(phrase_matches / 2.0, 1.0)
+
+        # Probabilistic OR to prevent stacking bias
+        combined = 1 - ((1 - token_score) * (1 - phrase_score))
+
+        return {
+            'token_score': token_score,
+            'phrase_score': phrase_score,
+            'combined': combined,
+            'token_matches': token_matches,
+            'phrase_matches': phrase_matches
+        }
 
     def _detect_meta_topic(self, text: str, words: List[str]) -> Tuple[str, float]:
         """Return the most relevant meta topic label and its strength (0-1)."""
@@ -797,15 +891,14 @@ class AudioAnalyzer:
             return 'Umum', 0.0
         best_label = 'Umum'
         best_score = 0.0
+        normalized_text = self._normalize_text(text)
+        tokens = words or self._tokenize(normalized_text)
         for topic_id, data in meta_topics.items():
             keywords = data.get('keywords', [])
             if not keywords:
                 continue
-            single_tokens = [kw for kw in keywords if ' ' not in kw]
-            phrase_tokens = [kw for kw in keywords if ' ' in kw]
-            token_score = self._check_keywords(words, single_tokens)
-            phrase_score = self._calculate_phrase_score(text, phrase_tokens)
-            combined = max(token_score, phrase_score)
+            scores = self._keyword_scores(normalized_text, tokens, keywords)
+            combined = scores['combined']
             if combined > best_score:
                 best_score = combined
                 best_label = data.get('label', topic_id)
@@ -815,8 +908,9 @@ class AudioAnalyzer:
         """Simple phrase matching score for multi-word keywords."""
         if not phrases:
             return 0.0
-        lowered = text.lower()
-        matches = sum(1 for phrase in phrases if phrase and phrase.lower() in lowered)
+        normalized = self._normalize_text(text)
+        stemmed = ' '.join(self._stem_tokens(normalized.split()))
+        matches = self._count_phrase_matches(stemmed, phrases)
         return min(matches / 2.0, 1.0)
     
     def _analyze_content(self, transcript: Dict) -> Dict:
@@ -876,27 +970,33 @@ class AudioAnalyzer:
         Returns default scores if segment is empty.
         """
         raw_text = segment.get('text') or ''
-        text = raw_text.lower()
-        words = segment.get('words', [])
-        
-        # If no words, extract from text
-        if not words and raw_text:
-            words = self._extract_words(raw_text)
-        
-        # Check for viral keywords (including new categories)
-        hook_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS.get('hook', []))
-        emotional_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS.get('emotional', []))
-        controversial_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS.get('controversial', []))
-        educational_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS.get('educational', []))
-        entertaining_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS.get('entertaining', []))
-        
-        # NEW: Check for money and urgency keywords
-        money_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS.get('money', []))
-        urgency_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS.get('urgency', []))
-        
-        # Check for filler words (negative score) - reduced penalty
-        filler_count = sum(1 for word in words if word in self.config.FILLER_WORDS)
-        filler_penalty = min(filler_count * 0.08, 0.4)  # Reduced from 0.1 and 0.5
+        normalized_text = self._normalize_text(raw_text)
+        tokens = self._tokenize(normalized_text)
+
+        # Check for viral keywords (token vs phrase separated)
+        hook_scores = self._keyword_scores(normalized_text, tokens, self.config.VIRAL_KEYWORDS.get('hook', []))
+        emotional_scores = self._keyword_scores(normalized_text, tokens, self.config.VIRAL_KEYWORDS.get('emotional', []))
+        controversial_scores = self._keyword_scores(normalized_text, tokens, self.config.VIRAL_KEYWORDS.get('controversial', []))
+        educational_scores = self._keyword_scores(normalized_text, tokens, self.config.VIRAL_KEYWORDS.get('educational', []))
+        entertaining_scores = self._keyword_scores(normalized_text, tokens, self.config.VIRAL_KEYWORDS.get('entertaining', []))
+        money_scores = self._keyword_scores(normalized_text, tokens, self.config.VIRAL_KEYWORDS.get('money', []))
+        urgency_scores = self._keyword_scores(normalized_text, tokens, self.config.VIRAL_KEYWORDS.get('urgency', []))
+
+        hook_score = hook_scores['combined']
+        emotional_score = emotional_scores['combined']
+        controversial_score = controversial_scores['combined']
+        educational_score = educational_scores['combined']
+        entertaining_score = entertaining_scores['combined']
+        money_score = money_scores['combined']
+        urgency_score = urgency_scores['combined']
+
+        # Check for filler words (negative score) - reduce bias for phrases
+        filler_tokens, filler_phrases = self._split_keywords(self.config.FILLER_WORDS)
+        stemmed_text = ' '.join(self._stem_tokens(tokens))
+        filler_token_matches = sum(1 for tok in self._stem_tokens(tokens) if tok in filler_tokens)
+        filler_phrase_matches = self._count_phrase_matches(stemmed_text, filler_phrases)
+        filler_count = filler_token_matches + (filler_phrase_matches * 2)
+        filler_penalty = min(filler_count * 0.08, 0.4)
         
         # Check for questions (engaging)
         has_question = '?' in segment['text']
@@ -911,15 +1011,17 @@ class AudioAnalyzer:
         emphasis_bonus = 0.1 if has_exclamation else 0
         
         # Meta topic / mental slap detection
-        meta_topic_label, meta_topic_strength = self._detect_meta_topic(raw_text, words)
-        mental_slap_score = self._check_keywords(
-            words,
+        meta_topic_label, meta_topic_strength = self._detect_meta_topic(raw_text, tokens)
+        mental_slap_score = self._keyword_scores(
+            normalized_text,
+            tokens,
             getattr(self.config, 'MENTAL_SLAP_KEYWORDS', [])
-        )
-        rare_topic_score = self._check_keywords(
-            words,
+        )['combined']
+        rare_topic_score = self._keyword_scores(
+            normalized_text,
+            tokens,
             getattr(self.config, 'RARE_TOPICS', [])
-        )
+        )['combined']
 
         # Enhanced engagement calculation with money, urgency, and relatability
         engagement = (
@@ -949,6 +1051,20 @@ class AudioAnalyzer:
             'entertaining': entertaining_score,
             'money': money_score,
             'urgency': urgency_score,
+            'hook_token': hook_scores['token_score'],
+            'hook_phrase': hook_scores['phrase_score'],
+            'emotional_token': emotional_scores['token_score'],
+            'emotional_phrase': emotional_scores['phrase_score'],
+            'controversial_token': controversial_scores['token_score'],
+            'controversial_phrase': controversial_scores['phrase_score'],
+            'educational_token': educational_scores['token_score'],
+            'educational_phrase': educational_scores['phrase_score'],
+            'entertaining_token': entertaining_scores['token_score'],
+            'entertaining_phrase': entertaining_scores['phrase_score'],
+            'money_token': money_scores['token_score'],
+            'money_phrase': money_scores['phrase_score'],
+            'urgency_token': urgency_scores['token_score'],
+            'urgency_phrase': urgency_scores['phrase_score'],
             'meta_topic': meta_topic_label,
             'meta_topic_strength': meta_topic_strength,
             'mental_slap': mental_slap_score,
@@ -962,11 +1078,10 @@ class AudioAnalyzer:
     
     def _check_keywords(self, words: List[str], keywords: List[str]) -> float:
         """
-        Check how many keywords are present
-        Returns score 0-1
+        Backwards-compatible keyword score (token-only).
+        Prefer _keyword_scores() for new logic.
         """
-        matches = sum(1 for word in words if word in keywords)
-        # Normalize: 3+ matches = max score
+        matches = sum(1 for word in words if word in (keywords or []))
         return min(matches / 3.0, 1.0)
     
     def _find_hooks(self, segments: List[Dict]) -> List[Dict]:
@@ -977,10 +1092,11 @@ class AudioAnalyzer:
         hooks = []
         
         for segment in segments[:5]:  # Check first 5 segments
-            words = segment['words']
-            
-            # Check for hook keywords
-            hook_score = self._check_keywords(words, self.config.VIRAL_KEYWORDS['hook'])
+            text = segment.get('text', '')
+            tokens = self._tokenize(text)
+            hook_score = self._keyword_scores(
+                text, tokens, self.config.VIRAL_KEYWORDS['hook']
+            )['combined']
             
             if hook_score > 0.3:
                 hooks.append({
@@ -999,8 +1115,8 @@ class AudioAnalyzer:
         punchlines = []
         
         for segment in segments:
-            text = segment['text']
-            words = segment['words']
+            text = segment.get('text', '')
+            tokens = self._tokenize(text)
             
             # Punchlines often have:
             # - Emotional words
@@ -1008,8 +1124,12 @@ class AudioAnalyzer:
             # - Surprising facts
             # - Strong opinions
             
-            emotional = self._check_keywords(words, self.config.VIRAL_KEYWORDS['emotional'])
-            controversial = self._check_keywords(words, self.config.VIRAL_KEYWORDS['controversial'])
+            emotional = self._keyword_scores(
+                text, tokens, self.config.VIRAL_KEYWORDS['emotional']
+            )['combined']
+            controversial = self._keyword_scores(
+                text, tokens, self.config.VIRAL_KEYWORDS['controversial']
+            )['combined']
             
             punchline_score = (emotional + controversial) / 2
             
