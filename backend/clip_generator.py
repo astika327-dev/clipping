@@ -7,7 +7,7 @@ import os
 import re
 import subprocess
 import time
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from collections import Counter
 import json
 from datetime import timedelta
@@ -431,6 +431,12 @@ class ClipGenerator:
         # CONTEXT SNAPPING: Adjust clip boundaries to align with sentence/speech breaks
         if audio_segments:
             selected = self._snap_to_context_boundaries(selected, audio_segments)
+
+        if audio_segments and getattr(self.config, 'CONTEXT_EXTEND_ENABLED', True):
+            selected = self._extend_segments_for_context(selected, audio_segments)
+
+        if audio_segments and getattr(self.config, 'CONTEXT_ENFORCEMENT_ENABLED', True):
+            selected = self._enforce_context_completeness(selected, audio_segments)
 
         # ENTERPRISE FEATURE: Smart Narrative Stitching
         # Merge close segments to create longer, richer narrative arcs (Podcast style)
@@ -905,6 +911,450 @@ class ClipGenerator:
                 current_start = split_ts
 
         return refined
+
+    def _collect_word_timestamps(self, audio_segments: List[Dict]) -> List[Dict]:
+        """Collect word-level timestamps if available."""
+        words = []
+        for seg in audio_segments or []:
+            for word_data in seg.get('words', []) or []:
+                if not isinstance(word_data, dict):
+                    continue
+                start = word_data.get('start')
+                end = word_data.get('end')
+                if start is None or end is None:
+                    continue
+                text = (word_data.get('word') or word_data.get('text') or '').strip()
+                if not text:
+                    continue
+                words.append({'word': text, 'start': float(start), 'end': float(end)})
+        words.sort(key=lambda w: w['start'])
+        return words
+
+    def _get_transition_starters(self) -> set:
+        return {
+            'jadi', 'nah', 'oke', 'terus', 'dan', 'tapi', 'kalau', 'pertama',
+            'kedua', 'ketiga', 'selanjutnya', 'kemudian', 'sekarang', 'gini',
+            'begini', 'intinya', 'poinnya', 'maksudnya', 'artinya', 'misalnya',
+            'contohnya', 'faktanya', 'sebenarnya', 'sebenernya', 'padahal',
+            'sedangkan', 'namun', 'akan', 'tetapi', 'bahkan', 'oleh',
+            'so', 'but', 'and', 'then', 'if', 'now', 'first', 'second', 'third',
+            'next', 'finally', 'basically', 'actually', 'however', 'therefore',
+            'moreover', 'furthermore', 'meanwhile', 'although', 'because', 'since'
+        }
+
+    def _get_conclusion_indicators(self) -> List[str]:
+        return [
+            'jadi intinya', 'jadi kesimpulannya', 'intinya adalah', 'poinnya adalah',
+            'yang penting', 'yang paling penting', 'kuncinya adalah', 'rahasianya',
+            'itulah kenapa', 'itulah mengapa', 'makanya', 'mangkanya', 'oleh karena itu',
+            'karena itu', 'satu hal yang', 'hal yang paling', 'ingat ya', 'ingat baik-baik',
+            'catat ya', 'catet ya', 'simpan ini', 'ini kuncinya', 'ini rahasianya',
+            'so basically', 'the point is', 'the key is', 'the secret is', "that's why",
+            'remember this', 'keep in mind', 'bottom line', 'in conclusion', 'to summarize'
+        ]
+
+    def _get_answer_starters(self) -> List[str]:
+        return [
+            'jawabannya', 'jawaban', 'simpelnya', 'singkatnya', 'intinya',
+            'poinnya', 'gini', 'begini', 'karena', 'so', 'well',
+            'the answer is', 'because', "that's why", 'the reason',
+            'in short', 'short answer', 'long answer', 'basically'
+        ]
+
+    def _needs_answer_pairing(self, text: str) -> bool:
+        if not text or '?' not in text:
+            return False
+        last_q = text.rfind('?')
+        trailing = text[last_q + 1:].strip()
+        min_words = int(getattr(self.config, 'ANSWER_PAIRING_MIN_ANSWER_WORDS', 6))
+        return len(trailing.split()) < min_words
+
+    def _segment_looks_like_answer(self, text: str) -> bool:
+        if not text:
+            return False
+        lower = text.strip().lower()
+        if any(lower.startswith(starter) for starter in self._get_answer_starters()):
+            return True
+        if lower.startswith(('ya', 'iya', 'tidak', 'enggak', 'yes', 'no')):
+            return True
+        min_words = int(getattr(self.config, 'ANSWER_PAIRING_MIN_ANSWER_WORDS', 6))
+        if len(lower.split()) < min_words:
+            return False
+        if any(token in lower for token in ('karena', 'so', 'because', 'the reason', 'makanya', 'itulah', 'jadi')):
+            return True
+        return False
+
+    def _answer_concluded(self, text: str) -> bool:
+        if not text:
+            return False
+        lower = text.lower()
+        if any(marker in lower for marker in self._get_conclusion_indicators()):
+            return True
+        return text.rstrip().endswith(('.', '!', '?'))
+
+    def _dominant_speaker(self, segment: Dict) -> str:
+        left = float(segment.get('speaker_left_ratio', 0) or 0)
+        right = float(segment.get('speaker_right_ratio', 0) or 0)
+        min_dom = float(getattr(self.config, 'SPEAKER_QA_DOMINANCE_MIN', 0.15))
+        delta = float(getattr(self.config, 'SPEAKER_QA_SWITCH_DELTA', 0.08))
+        if left < min_dom and right < min_dom:
+            return 'none'
+        if abs(left - right) <= delta:
+            return 'both'
+        return 'left' if left > right else 'right'
+
+    def _get_dynamic_max_duration(self, segment: Dict, base_max: float) -> float:
+        if not getattr(self.config, 'DYNAMIC_DURATION_ENABLED', True):
+            return base_max
+
+        long_max = float(getattr(self.config, 'DYNAMIC_DURATION_LONG_MAX_SECONDS', base_max))
+        short_max = float(getattr(self.config, 'DYNAMIC_DURATION_SHORT_MAX_SECONDS', min(base_max, 40.0)))
+
+        narrative = segment.get('narrative_context', {}) or {}
+        content_type = segment.get('content_type') or narrative.get('content_type', 'general')
+        emotional_pos = narrative.get('emotional_arc_position', '')
+        has_story = narrative.get('has_story_arc', False)
+
+        if content_type in ('educational', 'crypto_trading', 'mindset') or has_story or emotional_pos in ('buildup', 'resolution'):
+            return max(base_max, long_max)
+        if content_type in ('mental_slap', 'money_talk', 'controversial', 'entertaining') or emotional_pos == 'climax':
+            return min(base_max, short_max)
+        return base_max
+
+    def _duration_bias_for_content(self, segment: Dict, narrative_context: Dict) -> float:
+        if not getattr(self.config, 'DYNAMIC_DURATION_ENABLED', True):
+            return 0.0
+
+        duration = float(segment.get('duration', 0))
+        content_type = segment.get('content_type') or narrative_context.get('content_type', 'general')
+
+        if content_type in ('educational', 'crypto_trading', 'mindset'):
+            if duration >= 40:
+                return 0.05
+            if duration < 20:
+                return -0.03
+        if content_type in ('mental_slap', 'money_talk', 'controversial', 'entertaining'):
+            if duration <= 25:
+                return 0.04
+            if duration > 45:
+                return -0.04
+
+        return 0.0
+
+    def _build_context_breakpoints(self, audio_segments: List[Dict]) -> Tuple[Dict, List[float]]:
+        """Build candidate breakpoints with quality scores for context-aware snapping."""
+        if not audio_segments:
+            return {}, []
+
+        transition_starters = self._get_transition_starters()
+        conclusion_indicators = self._get_conclusion_indicators()
+
+        break_point_data = []
+        for seg in audio_segments:
+            text = (seg.get('text') or '').strip()
+            text_lower = text.lower()
+
+            start_quality = 0.5
+            if text:
+                words = text.split()
+                first_word = words[0].lower() if words else ''
+                first_two_words = ' '.join(words[:2]).lower() if len(words) >= 2 else ''
+                if first_word in transition_starters:
+                    start_quality = 0.95
+                elif first_two_words.startswith(tuple(transition_starters)):
+                    start_quality = 0.9
+                elif first_word and first_word[0].isupper():
+                    start_quality = 0.8
+            break_point_data.append({'time': seg.get('start', 0), 'type': 'start', 'quality': start_quality})
+
+            end_quality = 0.5
+            has_conclusion = False
+            if text:
+                has_conclusion = any(phrase in text_lower for phrase in conclusion_indicators)
+                if has_conclusion:
+                    end_quality = 1.0
+                elif text.rstrip()[-1:] in '.!?':
+                    end_quality = 0.9
+                elif text.rstrip()[-1:] == ',':
+                    end_quality = 0.6
+            break_point_data.append({'time': seg.get('end', 0), 'type': 'end', 'quality': end_quality, 'has_conclusion': has_conclusion})
+
+        word_entries = self._collect_word_timestamps(audio_segments)
+        if word_entries:
+            for word_data in word_entries:
+                word_text = word_data['word']
+                end_time = word_data['end']
+                quality = 0.55
+                if word_text.endswith(('.', '!', '?')):
+                    quality = 0.9
+                elif word_text.endswith(','):
+                    quality = 0.7
+                break_point_data.append({
+                    'time': end_time,
+                    'type': 'word_end',
+                    'quality': quality,
+                    'has_conclusion': False
+                })
+
+        break_point_data.sort(key=lambda x: x['time'])
+
+        break_points_dict = {}
+        for bp in break_point_data:
+            t = round(bp['time'], 2)
+            if t not in break_points_dict:
+                break_points_dict[t] = bp
+                continue
+            existing = break_points_dict[t]
+            if bp['quality'] > existing.get('quality', 0):
+                break_points_dict[t] = bp
+            elif bp['quality'] == existing.get('quality', 0):
+                if bp.get('type') == 'end' and existing.get('type') != 'end':
+                    break_points_dict[t] = bp
+                elif bp.get('type') == 'word_end' and existing.get('type') == 'start':
+                    break_points_dict[t] = bp
+
+        break_times = sorted(break_points_dict.keys())
+        return break_points_dict, break_times
+
+    def _find_answer_pairing_end(
+        self,
+        segment: Dict,
+        audio_segments: List[Dict],
+        break_points_dict: Dict,
+        break_times: List[float]
+    ) -> Optional[float]:
+        text = (segment.get('text') or '').strip()
+        if not self._needs_answer_pairing(text):
+            return None
+
+        start = segment.get('start', 0)
+        current_end = segment.get('end', 0)
+        base_max = float(getattr(self.config, 'MAX_CLIP_DURATION', 55))
+        max_total = self._get_dynamic_max_duration(segment, base_max)
+        max_total = min(max_total, float(getattr(self.config, 'CONTEXT_STITCH_MAX_DURATION', max_total)))
+        max_extension = float(getattr(self.config, 'ANSWER_PAIRING_MAX_SECONDS', 12.0))
+        max_end = min(start + max_total, current_end + max_extension)
+        if max_end <= current_end + 0.2:
+            return None
+
+        if not break_times:
+            return None
+
+        candidates = [
+            seg for seg in audio_segments
+            if seg.get('end', 0) > current_end and seg.get('start', 0) <= max_end
+        ]
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda s: s.get('start', 0))
+        answer_starters = self._get_answer_starters()
+        min_words = int(getattr(self.config, 'ANSWER_PAIRING_MIN_ANSWER_WORDS', 6))
+
+        answer_index = None
+        for idx, cand in enumerate(candidates):
+            cand_text = (cand.get('text') or '').strip()
+            if not cand_text:
+                continue
+            cand_lower = cand_text.lower()
+            if any(cand_lower.startswith(starter) for starter in answer_starters):
+                answer_index = idx
+                break
+
+        if answer_index is None:
+            for idx, cand in enumerate(candidates):
+                cand_text = (cand.get('text') or '').strip()
+                if not cand_text or '?' in cand_text:
+                    continue
+                if len(cand_text.split()) >= min_words:
+                    answer_index = idx
+                    break
+
+        if answer_index is None:
+            return None
+
+        conclusion_indicators = self._get_conclusion_indicators()
+        answer_end = None
+        for cand in candidates[answer_index:]:
+            cand_text = (cand.get('text') or '').strip()
+            if not cand_text:
+                continue
+            cand_end = cand.get('end', cand.get('start', current_end))
+            answer_end = cand_end
+            cand_lower = cand_text.lower()
+            if any(marker in cand_lower for marker in conclusion_indicators):
+                break
+            if cand_text.endswith(('.', '!', '?')):
+                break
+            if answer_end >= max_end:
+                break
+
+        if not answer_end or answer_end <= current_end:
+            return None
+
+        best_end = None
+        best_score = 0.0
+        for bt in break_times:
+            if bt < answer_end - 0.05:
+                continue
+            if bt > max_end:
+                break
+
+            bp = break_points_dict.get(round(bt, 2), {})
+            quality = bp.get('quality', 0.5)
+            bp_type = bp.get('type', 'end')
+
+            if bp_type not in ('end', 'word_end') and quality < 0.75:
+                continue
+
+            diff = bt - answer_end
+            proximity = 1 - (diff / max_extension) if max_extension > 0 else 0
+            proximity = max(0.0, min(1.0, proximity))
+            total = quality * 0.6 + proximity * 0.3
+            if bp_type == 'end':
+                total += 0.1
+            elif bp_type == 'word_end':
+                total += 0.08
+            if bp.get('has_conclusion'):
+                total += 0.15
+
+            if total > best_score:
+                best_score = total
+                best_end = bt
+
+        return best_end or answer_end
+
+    def _apply_context_extension(
+        self,
+        segment: Dict,
+        start: float,
+        current_end: float,
+        new_end: float,
+        audio_segments: List[Dict],
+        validation: Dict,
+        reason: str
+    ) -> Dict:
+        new_text, new_audio_scores, overlap_audio = self._slice_audio_by_time(
+            audio_segments, start, new_end
+        )
+        new_segment = segment.copy()
+        new_segment['end'] = new_end
+        new_segment['duration'] = new_end - start
+        if new_text:
+            new_segment['text'] = new_text
+        if new_audio_scores:
+            new_segment['audio'] = new_audio_scores
+        if overlap_audio:
+            new_segment['audio_segment_ids'] = [
+                s.get('segment_id', s.get('id'))
+                for s in overlap_audio
+                if s.get('segment_id', s.get('id')) is not None
+            ]
+        new_segment['context_extended'] = True
+        new_segment['context_extension_seconds'] = round(new_end - current_end, 2)
+        new_segment['context_extension_issues'] = validation.get('issues', [])
+        if reason:
+            new_segment['context_extension_reason'] = reason
+        return new_segment
+
+    def _enforce_context_completeness(self, segments: List[Dict], audio_segments: List[Dict]) -> List[Dict]:
+        """Stitch adjacent segments to complete unanswered questions or incomplete thoughts."""
+        if not segments:
+            return segments
+
+        segments_sorted = sorted(segments, key=lambda s: s.get('start', 0))
+        stitched = []
+        stitched_count = 0
+
+        max_gap = float(getattr(self.config, 'CONTEXT_STITCH_MAX_GAP_SECONDS', 6.0))
+        max_total_cap = float(getattr(self.config, 'CONTEXT_STITCH_MAX_DURATION', 90.0))
+
+        i = 0
+        while i < len(segments_sorted):
+            segment = segments_sorted[i]
+            validation = self._validate_semantic_context(segment, audio_segments)
+            needs_answer = self._needs_answer_pairing(segment.get('text', ''))
+            needs_context = needs_answer or not validation.get('context_complete', True)
+
+            if not needs_context:
+                stitched.append(segment)
+                i += 1
+                continue
+
+            start = segment.get('start', 0)
+            current_end = segment.get('end', 0)
+            if current_end <= start:
+                stitched.append(segment)
+                i += 1
+                continue
+
+            base_max = float(getattr(self.config, 'MAX_CLIP_DURATION', 55))
+            max_total = min(self._get_dynamic_max_duration(segment, base_max), max_total_cap)
+
+            dominant = 'none'
+            if segment.get('is_conversation', False):
+                dominant = self._dominant_speaker(segment)
+
+            combined_end = current_end
+            end_index = i
+            answer_found = False
+
+            for j in range(i + 1, len(segments_sorted)):
+                next_seg = segments_sorted[j]
+                gap = next_seg.get('start', 0) - combined_end
+                if gap > max_gap:
+                    break
+
+                proposed_end = max(combined_end, next_seg.get('end', combined_end))
+                if proposed_end - start > max_total:
+                    break
+
+                if needs_answer:
+                    if dominant not in ('none', 'both'):
+                        next_dom = self._dominant_speaker(next_seg)
+                        if next_dom not in ('none', 'both') and next_dom != dominant:
+                            answer_found = True
+                    if not answer_found and self._segment_looks_like_answer(next_seg.get('text', '')):
+                        answer_found = True
+
+                combined_end = proposed_end
+                end_index = j
+
+                combined_text, _, _ = self._slice_audio_by_time(audio_segments, start, combined_end)
+                if needs_answer:
+                    if answer_found and self._answer_concluded(combined_text):
+                        break
+                else:
+                    combined_validation = self._validate_semantic_context({'text': combined_text}, audio_segments)
+                    if combined_validation.get('context_complete', True):
+                        break
+
+            if end_index > i and combined_end > current_end:
+                reason = 'answer_pairing_stitch' if needs_answer else 'context_stitch'
+                new_segment = self._apply_context_extension(
+                    segment,
+                    start,
+                    current_end,
+                    combined_end,
+                    audio_segments,
+                    validation,
+                    reason
+                )
+                new_segment['context_stitch_count'] = end_index - i
+                new_segment['context_stitched'] = True
+                stitched.append(new_segment)
+                stitched_count += 1
+                i = end_index + 1
+                continue
+
+            stitched.append(segment)
+            i += 1
+
+        if stitched_count:
+            print(f"Context-stitched {stitched_count}/{len(segments_sorted)} clips to complete thoughts")
+
+        return stitched
+
     def _snap_to_context_boundaries(self, segments: List[Dict], audio_segments: List[Dict]) -> List[Dict]:
         """
         Intelligently adjust segment boundaries like a skilled editor with high IQ/EQ.
@@ -916,81 +1366,8 @@ class ClipGenerator:
         if not audio_segments:
             return segments
         
-        # === ENHANCED BOUNDARY DETECTION ===
-        # Transition words that indicate a NEW topic starting (good start points)
-        transition_starters = {
-            # Indonesian
-            'jadi', 'nah', 'oke', 'terus', 'dan', 'tapi', 'kalau', 'pertama',
-            'kedua', 'ketiga', 'selanjutnya', 'kemudian', 'sekarang', 'gini',
-            'begini', 'intinya', 'poinnya', 'maksudnya', 'artinya', 'misalnya',
-            'contohnya', 'faktanya', 'sebenarnya', 'sebenernya', 'padahal',
-            'sedangkan', 'namun', 'akan', 'tetapi', 'bahkan', 'oleh',
-            # English
-            'so', 'but', 'and', 'then', 'if', 'now', 'first', 'second', 'third',
-            'next', 'finally', 'basically', 'actually', 'however', 'therefore',
-            'moreover', 'furthermore', 'meanwhile', 'although', 'because', 'since'
-        }
-        
-        # Conclusion phrases that indicate topic ENDING (good end points)
-        conclusion_indicators = [
-            # Indonesian conclusions
-            'jadi intinya', 'jadi kesimpulannya', 'intinya adalah', 'poinnya adalah',
-            'yang penting', 'yang paling penting', 'kuncinya adalah', 'rahasianya',
-            'itulah kenapa', 'itulah mengapa', 'makanya', 'mangkanya', 'oleh karena itu',
-            'karena itu', 'satu hal yang', 'hal yang paling', 'ingat ya', 'ingat baik-baik',
-            'catat ya', 'catet ya', 'simpan ini', 'ini kuncinya', 'ini rahasianya',
-            # English conclusions
-            'so basically', 'the point is', 'the key is', 'the secret is', 'that\'s why',
-            'remember this', 'keep in mind', 'bottom line', 'in conclusion', 'to summarize'
-        ]
-        
-        # Build a list of natural break points with quality scores
-        # Each audio segment represents a transcribed phrase/sentence
-        break_point_data = []
-        for seg in audio_segments:
-            text = (seg.get('text') or '').strip()
-            text_lower = text.lower()
-            
-            # Start points - prefer starts of sentences
-            start_quality = 0.5
-            if text and len(text) > 0:
-                first_word = text.split()[0].lower() if text.split() else ''
-                first_two_words = ' '.join(text.split()[:2]).lower() if len(text.split()) >= 2 else ''
-                
-                # Better quality for transition starters
-                if first_word in transition_starters:
-                    start_quality = 0.95  # Excellent start point
-                elif first_two_words.startswith(tuple(transition_starters)):
-                    start_quality = 0.9
-                elif first_word and first_word[0].isupper():
-                    start_quality = 0.8
-            break_point_data.append({'time': seg.get('start', 0), 'type': 'start', 'quality': start_quality})
-            
-            # End points - prefer ends of sentences and conclusions
-            end_quality = 0.5
-            if text:
-                # Check for conclusion phrases (highest priority)
-                has_conclusion = any(phrase in text_lower for phrase in conclusion_indicators)
-                if has_conclusion:
-                    end_quality = 1.0  # Perfect end point - conclusion detected
-                elif text.rstrip()[-1:] in '.!?':
-                    end_quality = 0.9  # Great end point - sentence complete
-                elif text.rstrip()[-1:] == ',':
-                    end_quality = 0.6  # Acceptable pause
-            break_point_data.append({'time': seg.get('end', 0), 'type': 'end', 'quality': end_quality, 'has_conclusion': has_conclusion if text else False})
-        
-        # Sort by time and deduplicate
-        break_point_data.sort(key=lambda x: x['time'])
-        
-        # Create lookup for quick access
-        break_points_dict = {}
-        for bp in break_point_data:
-            t = round(bp['time'], 2)
-            if t not in break_points_dict or bp['quality'] > break_points_dict[t]['quality']:
-                break_points_dict[t] = bp
-        
-        break_times = sorted(break_points_dict.keys())
-        
+        break_points_dict, break_times = self._build_context_breakpoints(audio_segments)
+
         if not break_times:
             return segments
         
@@ -1009,6 +1386,9 @@ class ClipGenerator:
                 diff = abs(bt - original_start)
                 if diff <= snap_margin:
                     bp_data = break_points_dict.get(round(bt, 2), {})
+                    bp_type = bp_data.get('type', 'end')
+                    if bp_type not in ('start', 'word_start'):
+                        continue
                     quality = bp_data.get('quality', 0.5)
                     # Score = quality * proximity factor
                     proximity_score = 1 - (diff / snap_margin)
@@ -1034,7 +1414,12 @@ class ClipGenerator:
                     bp_type = bp_data.get('type', 'end')
                     
                     # Prefer actual end points over start points
-                    type_bonus = 0.2 if bp_type == 'end' else 0
+                    if bp_type == 'end':
+                        type_bonus = 0.2
+                    elif bp_type == 'word_end':
+                        type_bonus = 0.15
+                    else:
+                        type_bonus = 0
                     
                     proximity_score = 1 - (diff / snap_margin)
                     total_score = quality * 0.5 + proximity_score * 0.3 + type_bonus
@@ -1073,6 +1458,127 @@ class ClipGenerator:
             print(f"🧠 Smart context-adjusted {adjusted_count}/{len(segments)} segment boundaries for coherent flow")
         
         return adjusted_segments
+
+    def _extend_segments_for_context(self, segments: List[Dict], audio_segments: List[Dict]) -> List[Dict]:
+        """Extend clip ends to avoid cutting off answers or conclusions."""
+        if not audio_segments:
+            return segments
+
+        max_extension = float(getattr(self.config, 'CONTEXT_EXTEND_MAX_SECONDS', 8.0))
+        base_max = float(getattr(self.config, 'MAX_CLIP_DURATION', 55))
+        max_total_cap = float(getattr(self.config, 'CONTEXT_STITCH_MAX_DURATION', 90.0))
+        min_end_quality = float(getattr(self.config, 'CONTEXT_EXTEND_MIN_END_QUALITY', 0.6))
+        min_score = float(getattr(self.config, 'CONTEXT_EXTEND_MIN_SCORE', 0.55))
+
+        break_points_dict, break_times = self._build_context_breakpoints(audio_segments)
+        if not break_times:
+            return segments
+
+        extended = []
+        extended_count = 0
+
+        for segment in segments:
+            max_total = self._get_dynamic_max_duration(segment, base_max)
+            max_total = min(max_total, max_total_cap)
+            validation = self._validate_semantic_context(segment, audio_segments)
+            boundary_quality = self._detect_idea_boundaries(segment, audio_segments)
+            start = segment.get('start', 0)
+            current_end = segment.get('end', 0)
+            if current_end <= start:
+                extended.append(segment)
+                continue
+
+            answer_end = None
+            if getattr(self.config, 'ANSWER_PAIRING_ENABLED', True):
+                answer_end = self._find_answer_pairing_end(
+                    segment, audio_segments, break_points_dict, break_times
+                )
+
+            if answer_end:
+                new_segment = self._apply_context_extension(
+                    segment,
+                    start,
+                    current_end,
+                    answer_end,
+                    audio_segments,
+                    validation,
+                    'answer_pairing'
+                )
+                extended.append(new_segment)
+                extended_count += 1
+                continue
+
+            needs_extension = (
+                not validation.get('context_complete', True)
+                or 'ends_mid_sentence' in validation.get('issues', [])
+                or 'unanswered_question' in validation.get('issues', [])
+                or boundary_quality.get('end_quality', 0.5) < 0.7
+            )
+
+            if not needs_extension:
+                extended.append(segment)
+                continue
+
+            max_end = min(start + max_total, current_end + max_extension)
+            if max_end <= current_end + 0.2:
+                extended.append(segment)
+                continue
+
+            best_end = None
+            best_score = 0.0
+            for bt in break_times:
+                if bt <= current_end:
+                    continue
+                if bt > max_end:
+                    break
+
+                bp = break_points_dict.get(round(bt, 2), {})
+                quality = bp.get('quality', 0.5)
+                bp_type = bp.get('type', 'end')
+                has_conclusion = bp.get('has_conclusion', False)
+
+                if bp_type not in ('end', 'word_end') and quality < 0.75:
+                    continue
+
+                diff = bt - current_end
+                proximity = 1 - (diff / max_extension) if max_extension > 0 else 0
+                proximity = max(0.0, min(1.0, proximity))
+                total = quality * 0.6 + proximity * 0.3
+                if bp_type == 'end':
+                    total += 0.1
+                elif bp_type == 'word_end':
+                    total += 0.08
+                if has_conclusion:
+                    total += 0.15
+
+                if total > best_score:
+                    best_score = total
+                    best_end = bt
+
+            if best_end is None:
+                extended.append(segment)
+                continue
+
+            best_quality = break_points_dict.get(round(best_end, 2), {}).get('quality', 0.5)
+            if best_score < min_score and best_quality < min_end_quality:
+                extended.append(segment)
+                continue
+            new_segment = self._apply_context_extension(
+                segment,
+                start,
+                current_end,
+                best_end,
+                audio_segments,
+                validation,
+                'context_extend'
+            )
+            extended.append(new_segment)
+            extended_count += 1
+
+        if extended_count:
+            print(f"Context-extended {extended_count}/{len(segments)} clips to keep endings intact")
+
+        return extended
 
     def _segments_overlap(self, seg1: Tuple[float, float], seg2: Tuple[float, float]) -> bool:
         """Check if two time segments overlap"""
@@ -2193,6 +2699,10 @@ class ClipGenerator:
                 viral_score *= 0.85  # Moderate penalty for low confidence
             elif semantic_validation['confidence'] > 0.7:
                 viral_score += 0.05  # Small bonus for high confidence context
+
+            duration_bias = self._duration_bias_for_content(segment, narrative_context)
+            if duration_bias:
+                viral_score += duration_bias
             
             # ENTERPRISE: Enhanced Virality Metrics
             enterprise_metrics = None
@@ -3421,7 +3931,10 @@ class ClipGenerator:
             can_merge = False
             if 0 < gap <= max_gap:
                 combined_duration = next_clip['end'] - current_clip['start']
-                if combined_duration <= 90: # Allow up to 90s for extended narrative
+                base_max = float(getattr(self.config, 'MAX_CLIP_DURATION', 55))
+                max_allowed = self._get_dynamic_max_duration(current_clip, base_max)
+                max_allowed = min(max_allowed, float(getattr(self.config, 'CONTEXT_STITCH_MAX_DURATION', max_allowed)))
+                if combined_duration <= max_allowed:
                     can_merge = True
             
             if can_merge:

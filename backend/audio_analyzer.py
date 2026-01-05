@@ -68,6 +68,11 @@ class AudioAnalyzer:
         self.dual_model_enabled = getattr(config, 'DUAL_MODEL_ENABLED', True)
         self.dual_model_max_duration = getattr(config, 'DUAL_MODEL_MAX_DURATION', 600)
         self.dual_model_secondary = getattr(config, 'DUAL_MODEL_SECONDARY', 'large-v3-turbo')
+
+        self.word_timestamps_enabled = overrides.get(
+            'word_timestamps',
+            getattr(config, 'WORD_TIMESTAMPS_ENABLED', True)
+        )
         
         # Groq API settings
         self.groq_enabled = getattr(config, 'GROQ_API_ENABLED', True)
@@ -236,8 +241,25 @@ class AudioAnalyzer:
                     language=language,
                     task='transcribe',
                     verbose=False,
-                    fp16=False
+                    fp16=False,
+                    word_timestamps=self.word_timestamps_enabled
                 )
+            except TypeError as e:
+                if 'word_timestamps' in str(e):
+                    print("   word_timestamps not supported, disabling.")
+                    self.word_timestamps_enabled = False
+                    try:
+                        result_container['result'] = self.model.transcribe(
+                            self.video_path,
+                            language=language,
+                            task='transcribe',
+                            verbose=False,
+                            fp16=False
+                        )
+                    except Exception as exc:
+                        result_container['error'] = exc
+                else:
+                    result_container['error'] = e
             except Exception as e:
                 result_container['error'] = e
         
@@ -261,12 +283,15 @@ class AudioAnalyzer:
 
         segments = []
         for segment in result['segments']:
+            word_entries = []
+            if self.word_timestamps_enabled:
+                word_entries = self._extract_word_timestamps(segment.get('words', []))
             segments.append({
                 'id': segment['id'],
                 'start': segment['start'],
                 'end': segment['end'],
                 'text': segment['text'].strip(),
-                'words': self._extract_words(segment['text'])
+                'words': word_entries
             })
 
         print(f"✅ Transcribed {len(segments)} segments")
@@ -298,29 +323,50 @@ class AudioAnalyzer:
         
         print(f"   📊 Settings: beam_size={beam_size}, chunk_length={chunk_length}, vad_filter={vad_filter}")
 
+        word_timestamps = self.word_timestamps_enabled
+
+        def _transcribe_faster(use_vad: bool):
+            kwargs = {
+                'language': language,
+                'beam_size': beam_size,
+                'chunk_length': chunk_length,
+                'word_timestamps': word_timestamps
+            }
+            if use_vad:
+                kwargs['vad_filter'] = vad_filter
+                if vad_filter:
+                    kwargs['vad_parameters'] = dict(
+                        min_silence_duration_ms=500,  # Min silence to consider
+                        speech_pad_ms=200,  # Padding around speech
+                    )
+            return self.faster_model.transcribe(self.video_path, **kwargs)
+
         try:
-            segments_iter, info = self.faster_model.transcribe(
-                self.video_path,
-                language=language,
-                beam_size=beam_size,
-                chunk_length=chunk_length,
-                word_timestamps=False,
-                vad_filter=vad_filter,  # Skip silent parts for speed
-                vad_parameters=dict(
-                    min_silence_duration_ms=500,  # Min silence to consider
-                    speech_pad_ms=200,  # Padding around speech
-                ) if vad_filter else None
-            )
-        except TypeError:
-            # Fallback if VAD parameters not supported in this version
-            print("   ⚠️ VAD parameters not supported, using basic transcription")
-            segments_iter, info = self.faster_model.transcribe(
-                self.video_path,
-                language=language,
-                beam_size=beam_size,
-                chunk_length=chunk_length,
-                word_timestamps=False
-            )
+            segments_iter, info = _transcribe_faster(True)
+        except TypeError as exc:
+            if 'word_timestamps' in str(exc):
+                print("   word_timestamps not supported, disabling.")
+                word_timestamps = False
+                self.word_timestamps_enabled = False
+                try:
+                    segments_iter, info = _transcribe_faster(True)
+                except TypeError:
+                    # Fallback if VAD parameters not supported in this version
+                    print("   ⚠️ VAD parameters not supported, using basic transcription")
+                    segments_iter, info = _transcribe_faster(False)
+            else:
+                # Fallback if VAD parameters not supported in this version
+                print("   ⚠️ VAD parameters not supported, using basic transcription")
+                try:
+                    segments_iter, info = _transcribe_faster(False)
+                except TypeError as exc_inner:
+                    if 'word_timestamps' in str(exc_inner):
+                        print("   word_timestamps not supported, disabling.")
+                        word_timestamps = False
+                        self.word_timestamps_enabled = False
+                        segments_iter, info = _transcribe_faster(False)
+                    else:
+                        raise
 
         segments = []
         low_confidence_segments = []
@@ -341,13 +387,17 @@ class AudioAnalyzer:
             # Confidence formula: higher logprob = higher confidence, penalize no_speech
             confidence = min(1.0, max(0.0, (avg_logprob + 1.0) * (1.0 - no_speech_prob)))
             total_confidence += confidence
-            
+
+            word_entries = []
+            if self.word_timestamps_enabled:
+                word_entries = self._extract_word_timestamps(getattr(segment, 'words', []))
+
             seg_data = {
                 'id': idx,
                 'start': segment.start,
                 'end': segment.end,
                 'text': text,
-                'words': self._extract_words(text),
+                'words': word_entries,
                 'confidence': confidence,
                 'avg_logprob': avg_logprob,
                 'no_speech_prob': no_speech_prob
@@ -422,7 +472,7 @@ class AudioAnalyzer:
                 'start': start,
                 'end': end,
                 'text': f'Audio content {idx + 1}',
-                'words': ['audio', 'content']
+                'words': []
             })
             start = end
             idx += 1
@@ -487,7 +537,7 @@ class AudioAnalyzer:
                     improved = improved_segments[seg['id']]
                     # Preserve original timing, update text and confidence
                     seg['text'] = improved.get('text', seg['text'])
-                    seg['words'] = self._extract_words(seg['text'])
+                    seg['words'] = []
                     seg['confidence'] = improved.get('confidence', seg.get('confidence', 0))
                     seg['improved_by'] = improved.get('source', 'retry')
                 new_segments.append(seg)
@@ -700,6 +750,7 @@ class AudioAnalyzer:
         all_segments = []
         segment_id = 0
         full_text = []
+        word_timestamps = self.word_timestamps_enabled
         
         # Process video in chunks
         import subprocess
@@ -737,22 +788,41 @@ class AudioAnalyzer:
                 subprocess.run(ffmpeg_cmd, capture_output=True, timeout=60)
                 
                 # Transcribe chunk
-                chunk_result = self.model.transcribe(
-                    chunk_path,
-                    language=language,
-                    task='transcribe',
-                    verbose=False,
-                    fp16=False
-                )
+                try:
+                    chunk_result = self.model.transcribe(
+                        chunk_path,
+                        language=language,
+                        task='transcribe',
+                        verbose=False,
+                        fp16=False,
+                        word_timestamps=word_timestamps
+                    )
+                except TypeError as exc:
+                    if 'word_timestamps' in str(exc):
+                        print("   word_timestamps not supported, disabling.")
+                        word_timestamps = False
+                        self.word_timestamps_enabled = False
+                        chunk_result = self.model.transcribe(
+                            chunk_path,
+                            language=language,
+                            task='transcribe',
+                            verbose=False,
+                            fp16=False
+                        )
+                    else:
+                        raise
                 
                 # Add offset to segment times
                 for segment in chunk_result['segments']:
+                    word_entries = []
+                    if word_timestamps:
+                        word_entries = self._extract_word_timestamps(segment.get('words', []))
                     all_segments.append({
                         'id': segment_id,
                         'start': segment['start'] + start_time,
                         'end': segment['end'] + start_time,
                         'text': segment['text'].strip(),
-                        'words': self._extract_words(segment['text'])
+                        'words': word_entries
                     })
                     segment_id += 1
                 
@@ -772,7 +842,7 @@ class AudioAnalyzer:
                     'start': start_time,
                     'end': chunk_end,
                     'text': f'Audio content {chunk_idx + 1}',
-                    'words': ['audio', 'content']
+                    'words': []
                 })
                 segment_id += 1
         
@@ -787,6 +857,46 @@ class AudioAnalyzer:
     def _extract_words(self, text: str) -> List[str]:
         """Extract normalized tokens from text."""
         return self._tokenize(text)
+
+    def _extract_word_timestamps(self, raw_words: List) -> List[Dict]:
+        """Normalize word-level timestamps from Whisper outputs."""
+        if not raw_words:
+            return []
+
+        words = []
+        for item in raw_words:
+            if isinstance(item, dict):
+                word = item.get('word') or item.get('text') or ''
+                start = item.get('start')
+                end = item.get('end')
+                prob = item.get('probability', item.get('prob'))
+            else:
+                word = getattr(item, 'word', '') or getattr(item, 'text', '')
+                start = getattr(item, 'start', None)
+                end = getattr(item, 'end', None)
+                prob = getattr(item, 'probability', getattr(item, 'prob', None))
+
+            if start is None or end is None:
+                continue
+
+            word = str(word).strip()
+            if not word:
+                continue
+
+            entry = {
+                'word': word,
+                'start': float(start),
+                'end': float(end)
+            }
+            if prob is not None:
+                try:
+                    entry['probability'] = float(prob)
+                except (TypeError, ValueError):
+                    pass
+            words.append(entry)
+
+        words.sort(key=lambda w: w['start'])
+        return words
 
     def _normalize_text(self, text: str) -> str:
         """Normalize text for keyword/phrase matching."""
@@ -930,7 +1040,7 @@ class AudioAnalyzer:
                 'start': 0,
                 'end': 30,
                 'text': 'Audio content',
-                'words': ['audio', 'content']
+                'words': []
             }]
         
         # Analyze each segment
@@ -942,6 +1052,7 @@ class AudioAnalyzer:
                 'start': segment.get('start', 0),
                 'end': segment.get('end', segment.get('start', 0) + 5),
                 'text': segment.get('text', ''),
+                'words': segment.get('words', []),
                 'scores': score
             })
         

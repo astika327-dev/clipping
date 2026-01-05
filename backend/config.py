@@ -83,6 +83,7 @@ class Config:
     FASTER_WHISPER_BEST_OF = int(os.environ.get('FASTER_WHISPER_BEST_OF', 5))  # Multiple samples for best result
     FASTER_WHISPER_PATIENCE = float(os.environ.get('FASTER_WHISPER_PATIENCE', 1.0))  # Beam search patience
     FASTER_WHISPER_CONDITION_ON_PREV = os.environ.get('FASTER_WHISPER_CONDITION_ON_PREV', 'true').lower() == 'true'
+    WORD_TIMESTAMPS_ENABLED = os.environ.get('WORD_TIMESTAMPS_ENABLED', 'true').lower() == 'true'
     
     # === HYBRID TRANSCRIPTION SYSTEM ===
     # Enable hybrid transcription for improved accuracy
@@ -134,6 +135,23 @@ class Config:
     VISUAL_WINDOW_STEP_RATIO = float(os.environ.get('VISUAL_WINDOW_STEP_RATIO', 0.5))
     MIN_CLIP_DURATION = 8  # Lowered from 9 for more flexibility
     MAX_CLIP_DURATION = 55  # Increased from 35 for extended clips
+
+    # Context extension to avoid cutting off endings
+    CONTEXT_EXTEND_ENABLED = os.environ.get('CONTEXT_EXTEND_ENABLED', 'true').lower() == 'true'
+    CONTEXT_EXTEND_MAX_SECONDS = float(os.environ.get('CONTEXT_EXTEND_MAX_SECONDS', 8.0))
+    CONTEXT_EXTEND_MIN_END_QUALITY = float(os.environ.get('CONTEXT_EXTEND_MIN_END_QUALITY', 0.6))
+    CONTEXT_EXTEND_MIN_SCORE = float(os.environ.get('CONTEXT_EXTEND_MIN_SCORE', 0.55))
+    ANSWER_PAIRING_ENABLED = os.environ.get('ANSWER_PAIRING_ENABLED', 'true').lower() == 'true'
+    ANSWER_PAIRING_MAX_SECONDS = float(os.environ.get('ANSWER_PAIRING_MAX_SECONDS', 12.0))
+    ANSWER_PAIRING_MIN_ANSWER_WORDS = int(os.environ.get('ANSWER_PAIRING_MIN_ANSWER_WORDS', 6))
+    CONTEXT_ENFORCEMENT_ENABLED = os.environ.get('CONTEXT_ENFORCEMENT_ENABLED', 'true').lower() == 'true'
+    CONTEXT_STITCH_MAX_GAP_SECONDS = float(os.environ.get('CONTEXT_STITCH_MAX_GAP_SECONDS', 6.0))
+    CONTEXT_STITCH_MAX_DURATION = float(os.environ.get('CONTEXT_STITCH_MAX_DURATION', 90.0))
+    DYNAMIC_DURATION_ENABLED = os.environ.get('DYNAMIC_DURATION_ENABLED', 'true').lower() == 'true'
+    DYNAMIC_DURATION_LONG_MAX_SECONDS = float(os.environ.get('DYNAMIC_DURATION_LONG_MAX_SECONDS', 65.0))
+    DYNAMIC_DURATION_SHORT_MAX_SECONDS = float(os.environ.get('DYNAMIC_DURATION_SHORT_MAX_SECONDS', 40.0))
+    SPEAKER_QA_DOMINANCE_MIN = float(os.environ.get('SPEAKER_QA_DOMINANCE_MIN', 0.15))
+    SPEAKER_QA_SWITCH_DELTA = float(os.environ.get('SPEAKER_QA_SWITCH_DELTA', 0.08))
 
     # Clip selection modes
     CLIP_SELECTION_MODE = os.environ.get('CLIP_SELECTION_MODE', 'standard').lower()  # standard | quality-first
