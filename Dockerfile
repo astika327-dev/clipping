@@ -5,18 +5,22 @@
 # Run:   docker run --gpus all -p 5000:5000 -p 80:80 ai-video-clipper
 # ================================================
 
-FROM nvidia/cuda:11.8-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu22.04
 
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Jakarta
 
-# System dependencies
-RUN apt-get update && apt-get install -y \
+# System dependencies + cuDNN 9 for faster-whisper/ctranslate2
+RUN apt-get update && apt-get install -y --allow-change-held-packages \
     python3 python3-pip python3-venv \
     ffmpeg git curl wget nano \
     nginx \
+    libcudnn9-cuda-12 libcudnn9-dev-cuda-12 \
     && rm -rf /var/lib/apt/lists/*
+
+# Disable Triton for OpenAI Whisper (fallback compatibility)
+ENV WHISPER_TRITON=0
 
 # Install Node.js 20
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
@@ -31,7 +35,7 @@ COPY backend/requirements.txt /app/backend/
 RUN pip3 install --no-cache-dir -r /app/backend/requirements.txt
 
 # Install PyTorch with CUDA
-RUN pip3 install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+RUN pip3 install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 
 # Copy frontend and build
 COPY frontend/ /app/frontend/
