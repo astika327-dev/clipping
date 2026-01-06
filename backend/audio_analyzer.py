@@ -242,7 +242,7 @@ class AudioAnalyzer:
                     task='transcribe',
                     verbose=False,
                     fp16=False,
-                    word_timestamps=self.word_timestamps_enabled
+                    word_timestamps=False  # Disabled due to Triton bug
                 )
             except TypeError as e:
                 if 'word_timestamps' in str(e):
@@ -795,7 +795,7 @@ class AudioAnalyzer:
                         task='transcribe',
                         verbose=False,
                         fp16=False,
-                        word_timestamps=word_timestamps
+                        word_timestamps=False  # Disabled due to Triton bug
                     )
                 except TypeError as exc:
                     if 'word_timestamps' in str(exc):
