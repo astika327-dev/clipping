@@ -1,0 +1,99 @@
+# ================================================
+# Docker Build Ignore
+# ================================================
+# Exclude files not needed for production build
+
+# Git
+.git
+.gitignore
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+*.egg-info/
+
+# Python virtual environments
+backend/venv/
+backend/.venv/
+
+# Node modules (will be installed fresh in container)
+node_modules/
+frontend/node_modules/
+
+# Frontend build artifacts (will be rebuilt)
+frontend/dist/
+frontend/.vite/
+
+# Test files
+*.test.py
+tests/
+__tests__/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation (not needed in production)
+*.md
+!README.md
+docs/
+
+# AWS scripts (not needed in container)
+aws-scripts/
+aws-cloudformation.yaml
+aws_setup.sh
+*.pem
+*.key
+
+# Local data
+backend/uploads/*
+backend/outputs/*
+data/
+
+# Environment files (will be mounted)
+.env
+.env.*
+backend/.env
+backend/.env.*
+
+# Logs
+*.log
+logs/
+
+# Cache
+.cache/
+~/.cache/
+
+# YouTube cookies (mounted separately)
+**/youtube_cookies.txt
+**/cookies.txt
+
+# GitHub workflows (not needed in container)
+.github/
+
+# Test and development files
+*.test.*
+*.spec.*
+test_*.py
+*_test.py
+
+# Misc
+*.zip
+*.tar.gz
+*.rar
+*.tmp
+*.bak

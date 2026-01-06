@@ -61,3 +61,8 @@ Thumbs.db
 *-key.pem
 clipper-*.pem
 aws-scripts/*.zip
+aws-scripts/docker-instance.txt
+
+# Docker data
+data/
+docker-instance.txt
